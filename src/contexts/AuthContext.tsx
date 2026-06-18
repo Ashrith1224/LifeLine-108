@@ -104,6 +104,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
     }
 
+    async function verifyRecoveryOtp(email: string, token: string) {
+        const { data, error } = await supabase.auth.verifyOtp({
+            email,
+            token,
+            type: 'recovery'
+        });
+        if (error) throw error;
+        return data;
+    }
+
     function sendEmailVerification(_user: any) {
         // Supabase sends verification email automatically on signup.
         return Promise.resolve();
@@ -172,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         sendEmailVerification,
         resetPassword,
+        verifyRecoveryOtp,
         updateUserPassword,
         reauthenticate,
         linkPhone,
