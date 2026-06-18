@@ -143,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Listen for auth state changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             const user = session?.user ?? null;
-            if (event === 'PASSWORD_RECOVERY') {
+            if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && window.location.hash.includes('type=recovery'))) {
                 window.location.hash = '#/reset-password';
             }
             if (user) {
