@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { supabase } from '../services/supabase';
@@ -8,6 +8,8 @@ const Navbar = () => {
     const [profile, setProfile] = useState<any>(null);
     const [isOpen, setIsOpen] = useState(false);
     const navigate = useNavigate();
+    const location = useLocation();
+    const isResetPasswordPage = location.pathname === '/reset-password';
 
     const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
     const [isInstallable, setIsInstallable] = useState(false);
@@ -61,70 +63,76 @@ const Navbar = () => {
                     LifeLine-108
                 </Link>
 
-                <button
-                    className="mobile-toggle"
-                    onClick={() => setIsOpen(!isOpen)}
-                    aria-label="Toggle Menu"
-                >
-                    ☰
-                </button>
+                {!isResetPasswordPage && (
+                    <button
+                        className="mobile-toggle"
+                        onClick={() => setIsOpen(!isOpen)}
+                        aria-label="Toggle Menu"
+                    >
+                        ☰
+                    </button>
+                )}
 
                 <div className={`nav-links ${isOpen ? 'open' : ''}`}>
-                    <Link to="/" onClick={handleHomeClick} className="nav-link">Home</Link>
-                    <Link to="/blood-banks" onClick={() => setIsOpen(false)} className="nav-link">Blood Banks</Link>
-                    {currentUser && (
-                        <Link to="/my-requests" onClick={() => setIsOpen(false)} className="nav-link">
-                            My Activity
-                        </Link>
-                    )}
-
-                    {isInstallable && (
-                        <button onClick={handleInstallClick} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
-                            📲 Install App
-                        </button>
-                    )}
-
-                    {currentUser && userRole === 'admin' && (
-                        <Link to="/admin" onClick={() => setIsOpen(false)} className="nav-link" style={{ color: 'var(--primary)' }}>
-                            Admin Panel
-                        </Link>
-                    )}
-
-                    {currentUser ? (
+                    {!isResetPasswordPage && (
                         <>
-                            {isProfileComplete ? (
-                                <div
-                                    onClick={() => { navigate('/dashboard'); setIsOpen(false); }}
-                                    style={{
-                                        width: '40px',
-                                        height: '40px',
-                                        borderRadius: '50%',
-                                        background: 'var(--primary)',
-                                        color: 'white',
-                                        display: 'flex',
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                        fontWeight: 'bold',
-                                        cursor: 'pointer',
-                                        boxShadow: 'var(--shadow-md)'
-                                    }}
-                                    title="Go to Dashboard"
-                                >
-                                    {profile?.name?.charAt(0).toUpperCase() || currentUser.email?.charAt(0).toUpperCase()}
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={() => navigate('/profile?mode=onboarding')}
-                                    className="btn btn-primary"
-                                >
-                                    Complete Signup
+                            <Link to="/" onClick={handleHomeClick} className="nav-link">Home</Link>
+                            <Link to="/blood-banks" onClick={() => setIsOpen(false)} className="nav-link">Blood Banks</Link>
+                            {currentUser && (
+                                <Link to="/my-requests" onClick={() => setIsOpen(false)} className="nav-link">
+                                    My Activity
+                                </Link>
+                            )}
+
+                            {isInstallable && (
+                                <button onClick={handleInstallClick} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
+                                    📲 Install App
                                 </button>
                             )}
-                        </>
-                    ) : (
-                        <>
-                            <Link to="/login" className="btn btn-ghost" onClick={() => setIsOpen(false)}>Login</Link>
-                            <Link to="/register" className="btn btn-primary" onClick={() => setIsOpen(false)}>Register</Link>
+
+                            {currentUser && userRole === 'admin' && (
+                                <Link to="/admin" onClick={() => setIsOpen(false)} className="nav-link" style={{ color: 'var(--primary)' }}>
+                                    Admin Panel
+                                </Link>
+                            )}
+
+                            {currentUser ? (
+                                <>
+                                    {isProfileComplete ? (
+                                        <div
+                                            onClick={() => { navigate('/dashboard'); setIsOpen(false); }}
+                                            style={{
+                                                width: '40px',
+                                                height: '40px',
+                                                borderRadius: '50%',
+                                                background: 'var(--primary)',
+                                                color: 'white',
+                                                display: 'flex',
+                                                justifyContent: 'center',
+                                                alignItems: 'center',
+                                                fontWeight: 'bold',
+                                                cursor: 'pointer',
+                                                boxShadow: 'var(--shadow-md)'
+                                            }}
+                                            title="Go to Dashboard"
+                                        >
+                                            {profile?.name?.charAt(0).toUpperCase() || currentUser.email?.charAt(0).toUpperCase()}
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => navigate('/profile?mode=onboarding')}
+                                            className="btn btn-primary"
+                                        >
+                                            Complete Signup
+                                        </button>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <Link to="/login" className="btn btn-ghost" onClick={() => setIsOpen(false)}>Login</Link>
+                                    <Link to="/register" className="btn btn-primary" onClick={() => setIsOpen(false)}>Register</Link>
+                                </>
+                            )}
                         </>
                     )}
                 </div>

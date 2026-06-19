@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
@@ -6,11 +6,21 @@ import { getFriendlyErrorMessage } from '../utils/errorUtils';
 const ResetPassword = () => {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const { updateUserPassword } = useAuth();
+    const { updateUserPassword, logout } = useAuth();
     const [error, setError] = useState('');
     const [msg, setMsg] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+    const isPasswordUpdated = useRef(false);
+
+    useEffect(() => {
+        return () => {
+            if (!isPasswordUpdated.current) {
+                // If the user navigates away or closes the page without updating, log them out
+                logout();
+            }
+        };
+    }, [logout]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -23,13 +33,16 @@ const ResetPassword = () => {
             setError('');
             setMsg('');
             setLoading(true);
+            isPasswordUpdated.current = true;
             await updateUserPassword(null, password);
+            await logout(); // Log out so they can log in cleanly with their new password
             setMsg("Password updated successfully! Redirecting...");
             setTimeout(() => {
                 navigate('/login');
             }, 2000);
         } catch (e: any) {
             console.error(e);
+            isPasswordUpdated.current = false;
             setError(getFriendlyErrorMessage(e));
         }
         setLoading(false);
