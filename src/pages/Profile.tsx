@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { getAllStates, getDistricts } from 'india-state-district';
@@ -29,8 +30,9 @@ const Profile = () => {
 
     useEffect(() => {
         if (currentUser) {
-            supabase.from('profiles').select('*').eq('id', currentUser.uid).single().then(({ data, error }) => {
-                if (data && !error) {
+            getDoc(doc(db, 'profiles', currentUser.uid)).then((docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
                     const stateCodeFound = getAllStates().find(s => s.name === data.state)?.code || '';
                     setFormData({
                         name: data.name || '',
@@ -39,16 +41,16 @@ const Profile = () => {
                         district: data.district || '',
                         city: data.city || '',
                         phone: data.phone ? data.phone.replace('+91', '') : '', // Extract just the 10 digits
-                        bloodGroup: data.blood_group || 'A+'
+                        bloodGroup: data.bloodGroup || data.blood_group || 'A+'
                     });
 
                     setUserRole(data.role || '');
 
                     if (data.role === 'donor') {
-                        setDonorType(data.donor_type || 'volunteer');
+                        setDonorType(data.donorType || data.donor_type || 'volunteer');
                     }
                 }
-            });
+            }).catch(console.error);
         }
     }, [currentUser]);
 
@@ -84,10 +86,10 @@ const Profile = () => {
                 state: formData.stateName,
                 district: formData.district,
                 city: formData.city,
-                blood_group: formData.bloodGroup
+                bloodGroup: formData.bloodGroup
             };
-            const { error: updateError } = await supabase.from('profiles').update(payload).eq('id', currentUser.uid);
-            if (updateError) throw updateError;
+
+            await setDoc(doc(db, 'profiles', currentUser.uid), payload, { merge: true });
             setMsg("Profile updated successfully!");
 
             // If onboarding, redirect to dashboard after save
@@ -105,7 +107,6 @@ const Profile = () => {
     const [passLoading, setPassLoading] = useState(false);
     const [showChangePassword, setShowChangePassword] = useState(false);
     const { updateUserPassword, reauthenticate, deleteAccount } = useAuth();
-
 
     async function handlePasswordChange(e: React.FormEvent) {
         e.preventDefault();

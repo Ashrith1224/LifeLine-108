@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { doc, getDoc, collection, query, where, onSnapshot, addDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { JitsiMeeting } from '@jitsi/react-sdk';
 
@@ -20,25 +21,31 @@ const Contact = () => {
     useEffect(() => {
         const fetchReq = async () => {
             if (!id) return;
-            const { data, error } = await supabase.from('requests').select('*').eq('id', id).single();
-            if (data && !error) {
-                setRequestData({
-                    ...data,
-                    patientName: data.patient_name,
-                    bloodGroup: data.blood_group,
-                    requesterId: data.requester_id,
-                    targetedDonorId: data.targeted_donor_id,
-                    createdAt: data.created_at,
-                    donorId: data.donor_id,
-                    donorName: data.donor_name,
-                    donorPhone: data.donor_phone,
-                    completedAt: data.completed_at,
-                    acceptedBy: data.accepted_by,
-                    acceptedAt: data.accepted_at,
-                    confirmedBy: data.confirmed_by,
-                    donorContact: data.donor_contact,
-                    acceptedDonors: data.accepted_donors
-                });
+            try {
+                const docSnap = await getDoc(doc(db, 'requests', id));
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    setRequestData({
+                        id: docSnap.id,
+                        ...data,
+                        patientName: data.patientName || data.patient_name,
+                        bloodGroup: data.bloodGroup || data.blood_group,
+                        requesterId: data.requesterId || data.requester_id,
+                        targetedDonorId: data.targetedDonorId || data.targeted_donor_id,
+                        createdAt: data.createdAt || data.created_at,
+                        donorId: data.donorId || data.donor_id,
+                        donorName: data.donorName || data.donor_name,
+                        donorPhone: data.donorPhone || data.donor_phone,
+                        completedAt: data.completedAt || data.completed_at,
+                        acceptedBy: data.acceptedBy || data.accepted_by,
+                        acceptedAt: data.acceptedAt || data.accepted_at,
+                        confirmedBy: data.confirmedBy || data.confirmed_by,
+                        donorContact: data.donorContact || data.donor_contact,
+                        acceptedDonors: data.acceptedDonors || data.accepted_donors || {}
+                    });
+                }
+            } catch (err) {
+                console.error("Error fetching request for contact:", err);
             }
             setLoading(false);
         };
@@ -47,34 +54,32 @@ const Contact = () => {
 
     useEffect(() => {
         if (!id) return;
-        const fetchMessages = async () => {
-            const { data, error } = await supabase
-                .from('messages')
-                .select('*')
-                .eq('request_id', id)
-                .order('created_at', { ascending: true });
-            if (data && !error) {
-                setMessages(data.map((m: any) => ({
+
+        const q = query(
+            collection(db, 'messages'),
+            where('requestId', '==', id)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach((d) => {
+                const m = d.data();
+                list.push({
+                    id: d.id,
                     ...m,
-                    senderId: m.sender_id,
-                    createdAt: m.created_at
-                })));
-                setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-            }
-        };
+                    senderId: m.senderId || m.sender_id,
+                    createdAt: m.createdAt || m.created_at
+                });
+            });
+            // Client-side sort by createdAt ascending
+            list.sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+            setMessages(list);
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        }, (err) => {
+            console.error("Error listening to messages:", err);
+        });
 
-        fetchMessages();
-
-        const channel = supabase
-            .channel(`chat-room-${id}`)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `request_id=eq.${id}` }, () => {
-                fetchMessages();
-            })
-            .subscribe();
-
-        return () => {
-            channel.unsubscribe();
-        };
+        return () => unsubscribe();
     }, [id]);
 
     const handleSend = async (e: React.FormEvent) => {
@@ -82,25 +87,21 @@ const Contact = () => {
         if (!newMessage.trim() || !id || !currentUser) return;
 
         try {
-            const { error: msgError } = await supabase.from('messages').insert({
-                request_id: id,
-                text: newMessage,
-                sender_id: currentUser.uid,
-                created_at: Date.now()
-            });
-            if (msgError) throw msgError;
-
-            const { error: reqError } = await supabase
-                .from('requests')
-                .update({
-                    last_message_at: Date.now(),
-                    last_message_by: currentUser.uid,
-                    last_message_text: newMessage
-                })
-                .eq('id', id);
-            if (reqError) throw reqError;
-
+            const textToSend = newMessage.trim();
             setNewMessage('');
+
+            await addDoc(collection(db, 'messages'), {
+                requestId: id,
+                text: textToSend,
+                senderId: currentUser.uid,
+                createdAt: Date.now()
+            });
+
+            await updateDoc(doc(db, 'requests', id), {
+                lastMessageAt: Date.now(),
+                lastMessageBy: currentUser.uid,
+                lastMessageText: textToSend
+            });
         } catch (error) {
             console.error('Error sending message:', error);
         }
@@ -119,23 +120,18 @@ const Contact = () => {
             const messageText = `📍 I've shared my location: ${locationUrl}`;
 
             try {
-                const { error: msgError } = await supabase.from('messages').insert({
-                    request_id: id,
+                await addDoc(collection(db, 'messages'), {
+                    requestId: id,
                     text: messageText,
-                    sender_id: currentUser.uid,
-                    created_at: Date.now()
+                    senderId: currentUser.uid,
+                    createdAt: Date.now()
                 });
-                if (msgError) throw msgError;
 
-                const { error: reqError } = await supabase
-                    .from('requests')
-                    .update({
-                        last_message_at: Date.now(),
-                        last_message_by: currentUser.uid,
-                        last_message_text: "📍 Shared a location"
-                    })
-                    .eq('id', id);
-                if (reqError) throw reqError;
+                await updateDoc(doc(db, 'requests', id), {
+                    lastMessageAt: Date.now(),
+                    lastMessageBy: currentUser.uid,
+                    lastMessageText: "📍 Shared a location"
+                });
             } catch (error) {
                 console.error('Error sending location:', error);
                 alert('Failed to share location.');

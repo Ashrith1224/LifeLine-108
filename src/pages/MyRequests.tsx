@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { jsPDF } from "jspdf";
 import { LOGO_BASE64 } from '../assets/logoBase64';
 import DashboardFeed from '../components/DashboardFeed';
@@ -20,7 +21,7 @@ const MyRequests = () => {
     const [foundDonors, setFoundDonors] = useState<any[]>([]);
     const [selectedDonorId, setSelectedDonorId] = useState('');
 
-    const [now, setNow] = useState(Date.now());
+    const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
         const interval = setInterval(() => setNow(Date.now()), 10000);
         return () => clearInterval(interval);
@@ -29,85 +30,78 @@ const MyRequests = () => {
     useEffect(() => {
         if (!currentUser) return;
 
-        setLoading(true);
-        let unsubRequests = () => { };
-        let unsubImpact = () => { };
+        // 1. Listen to requests created by current user
+        const qMyRequests = query(
+            collection(db, 'requests'),
+            where('requesterId', '==', currentUser.uid)
+        );
 
-        const fetchMyRequests = async () => {
-            const { data, error } = await supabase
-                .from('requests')
-                .select('*')
-                .eq('requester_id', currentUser.uid);
-            if (data && !error) {
-                const mapped = data.map(r => ({
+        const unsubRequests = onSnapshot(qMyRequests, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach((d) => {
+                const r = d.data();
+                list.push({
+                    id: d.id,
                     ...r,
-                    patientName: r.patient_name,
-                    bloodGroup: r.blood_group,
-                    requesterId: r.requester_id,
-                    targetedDonorId: r.targeted_donor_id,
-                    createdAt: r.created_at,
-                    donorId: r.donor_id,
-                    donorName: r.donor_name,
-                    donorPhone: r.donor_phone,
-                    completedAt: r.completed_at,
-                    acceptedBy: r.accepted_by,
-                    acceptedAt: r.accepted_at,
-                    confirmedBy: r.confirmed_by,
-                    donorContact: r.donor_contact,
-                    acceptedDonors: r.accepted_donors
-                }));
-                setMyRequests(mapped.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-            }
+                    patientName: r.patientName || r.patient_name,
+                    bloodGroup: r.bloodGroup || r.blood_group,
+                    requesterId: r.requesterId || r.requester_id,
+                    targetedDonorId: r.targetedDonorId || r.targeted_donor_id,
+                    createdAt: r.createdAt || r.created_at,
+                    donorId: r.donorId || r.donor_id,
+                    donorName: r.donorName || r.donor_name,
+                    donorPhone: r.donorPhone || r.donor_phone,
+                    completedAt: r.completedAt || r.completed_at,
+                    acceptedBy: r.acceptedBy || r.accepted_by,
+                    acceptedAt: r.acceptedAt || r.accepted_at,
+                    confirmedBy: r.confirmedBy || r.confirmed_by,
+                    donorContact: r.donorContact || r.donor_contact,
+                    acceptedDonors: r.acceptedDonors || r.accepted_donors || {}
+                });
+            });
+            list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            setMyRequests(list);
             setLoading(false);
-        };
+        }, (err) => {
+            console.error("Error listening to my requests:", err);
+            setLoading(false);
+        });
 
-        const fetchMyImpact = async () => {
-            const { data, error } = await supabase
-                .from('requests')
-                .select('*')
-                .eq('donor_id', currentUser.uid)
-                .eq('status', 'fulfilled');
-            if (data && !error) {
-                const mapped = data.map(r => ({
+        // 2. Listen to donation history (fulfilled requests)
+        const qMyImpact = query(
+            collection(db, 'requests'),
+            where('donorId', '==', currentUser.uid),
+            where('status', '==', 'fulfilled')
+        );
+
+        const unsubImpact = onSnapshot(qMyImpact, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach((d) => {
+                const r = d.data();
+                list.push({
+                    id: d.id,
                     ...r,
-                    patientName: r.patient_name,
-                    bloodGroup: r.blood_group,
-                    requesterId: r.requester_id,
-                    targetedDonorId: r.targeted_donor_id,
-                    createdAt: r.created_at,
-                    donorId: r.donor_id,
-                    donorName: r.donor_name,
-                    donorPhone: r.donor_phone,
-                    completedAt: r.completed_at,
-                    acceptedBy: r.accepted_by,
-                    acceptedAt: r.accepted_at,
-                    confirmedBy: r.confirmed_by,
-                    donorContact: r.donor_contact,
-                    acceptedDonors: r.accepted_donors
-                }));
-                setDonationHistory(mapped.sort((a: any, b: any) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime()));
-            }
-        };
-
-        try {
-            fetchMyRequests();
-            fetchMyImpact();
-
-            const channelReq = supabase
-                .channel('my-requests-changes')
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => {
-                    fetchMyRequests();
-                    fetchMyImpact();
-                })
-                .subscribe();
-
-            unsubRequests = () => {
-                channelReq.unsubscribe();
-            };
-        } catch (err) {
-            console.error("Error fetching data:", err);
-            setLoading(false);
-        }
+                    patientName: r.patientName || r.patient_name,
+                    bloodGroup: r.bloodGroup || r.blood_group,
+                    requesterId: r.requesterId || r.requester_id,
+                    targetedDonorId: r.targetedDonorId || r.targeted_donor_id,
+                    createdAt: r.createdAt || r.created_at,
+                    donorId: r.donorId || r.donor_id,
+                    donorName: r.donorName || r.donor_name,
+                    donorPhone: r.donorPhone || r.donor_phone,
+                    completedAt: r.completedAt || r.completed_at,
+                    acceptedBy: r.acceptedBy || r.accepted_by,
+                    acceptedAt: r.acceptedAt || r.accepted_at,
+                    confirmedBy: r.confirmedBy || r.confirmed_by,
+                    donorContact: r.donorContact || r.donor_contact,
+                    acceptedDonors: r.acceptedDonors || r.accepted_donors || {}
+                });
+            });
+            list.sort((a, b) => new Date(b.completedAt || b.createdAt).getTime() - new Date(a.completedAt || a.createdAt).getTime());
+            setDonationHistory(list);
+        }, (err) => {
+            console.error("Error listening to impact:", err);
+        });
 
         return () => {
             unsubRequests();
@@ -119,199 +113,137 @@ const MyRequests = () => {
     useEffect(() => {
         if (showConfirmModal) {
             const searchDonors = async () => {
-                if (!donorSearchTerm) {
-                    const { data, error } = await supabase
-                        .from('profiles')
-                        .select('*')
-                        .eq('role', 'donor');
-                    if (data && !error) {
-                        setFoundDonors(data.map(d => ({
-                            ...d,
-                            bloodGroup: d.blood_group
-                        })));
-                    }
-                    return;
-                }
-                const { data, error } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .eq('role', 'donor')
-                    .or(`name.ilike.%${donorSearchTerm}%,phone.like.%${donorSearchTerm}%`);
-                if (data && !error) {
-                    setFoundDonors(data.map(d => ({
-                        ...d,
-                        bloodGroup: d.blood_group
-                    })));
+                try {
+                    const q = query(
+                        collection(db, 'profiles'),
+                        where('role', '==', 'donor')
+                    );
+                    const snapshot = await getDocs(q);
+                    const list: any[] = [];
+                    snapshot.forEach((docSnap) => {
+                        const d = docSnap.data();
+                        const name = d.name || '';
+                        const phone = d.phone || '';
+                        if (!donorSearchTerm || name.toLowerCase().includes(donorSearchTerm.toLowerCase()) || phone.includes(donorSearchTerm)) {
+                            list.push({
+                                id: docSnap.id,
+                                ...d,
+                                bloodGroup: d.bloodGroup || d.blood_group
+                            });
+                        }
+                    });
+                    setFoundDonors(list);
+                } catch (e) {
+                    console.error("Error searching donors:", e);
                 }
             };
-            const debounce = setTimeout(searchDonors, 500);
+            const debounce = setTimeout(searchDonors, 400);
             return () => clearTimeout(debounce);
         }
     }, [donorSearchTerm, showConfirmModal]);
 
     const generateCertificate = (donation: any) => {
-        // Landscape orientation for a real certificate feel
         const doc = new jsPDF({ orientation: "landscape" });
         const width = 297;
         const height = 210;
 
-        // --- 1. Background ---
-        doc.setFillColor(255, 255, 255); // Pure white background to blend logo perfectly
+        // Background
+        doc.setFillColor(255, 255, 255);
         doc.rect(0, 0, width, height, 'F');
 
-        // Background watermarked logo
-        try {
-            doc.setGState(new (doc as any).GState({ opacity: 0.05 }));
-            doc.addImage(LOGO_BASE64, 'PNG', width / 2 - 110, height / 2 - 100, 220, 220);
-            doc.setGState(new (doc as any).GState({ opacity: 1.0 }));
-        } catch (e) {
-            console.warn('opacity unsupported, skipping background logo', e);
+        // Certificate Borders
+        doc.setDrawColor(211, 47, 47);
+        doc.setLineWidth(5);
+        doc.rect(10, 10, width - 20, height - 20);
+
+        doc.setDrawColor(255, 167, 38);
+        doc.setLineWidth(1.5);
+        doc.rect(14, 14, width - 28, height - 28);
+
+        // Logo
+        if (LOGO_BASE64) {
+            doc.addImage(LOGO_BASE64, 'PNG', width / 2 - 18, 20, 36, 36);
         }
 
-        // Watermark
-        doc.setFontSize(120);
-        doc.setTextColor(245, 240, 230); // Very light grey/cream
+        // Title
         doc.setFont("helvetica", "bold");
-        doc.text("LIFELINE-108", 40, height - 40, { angle: 30 });
+        doc.setFontSize(28);
+        doc.setTextColor(211, 47, 47);
+        doc.text("CERTIFICATE OF APPRECIATION", width / 2, 68, { align: "center" });
 
-        // --- 2. Borders ---
-        // Outer dark border (Navy Blue / Deep Slate)
-        doc.setLineWidth(2);
-        doc.setDrawColor(30, 41, 59);
-        doc.rect(15, 15, width - 30, height - 30);
-
-        // Inner thin elegant border (Gold-ish)
-        doc.setLineWidth(0.5);
-        doc.setDrawColor(180, 140, 80);
-        doc.rect(18, 18, width - 36, height - 36);
-
-        // Corner accents (Crimson thick lines)
-        doc.setLineWidth(4);
-        const accentColor = [169, 29, 58]; // Crimson
-        doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
-        const cl = 20; // Corner length
-        doc.line(15, 15, 15 + cl, 15); doc.line(15, 15, 15, 15 + cl); // Top Left
-        doc.line(width - 15, 15, width - 15 - cl, 15); doc.line(width - 15, 15, width - 15, 15 + cl); // Top Right
-        doc.line(15, height - 15, 15 + cl, height - 15); doc.line(15, height - 15, 15, height - 15 - cl); // Bottom Left
-        doc.line(width - 15, height - 15, width - 15 - cl, height - 15); doc.line(width - 15, height - 15, width - 15, height - 15 - cl); // Bottom Right
-
-        // --- Website Name at Top (Banner) ---
-        doc.setFillColor(169, 29, 58); // Deep Crimson
-        doc.rect(width / 2 - 40, 18, 80, 12, 'F');
-        doc.setFontSize(18);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(255, 255, 255);
-        doc.text("LIFELINE-108", width / 2, 26, { align: "center" });
-
-        // --- 3. Header ---
-        doc.setFontSize(38);
-        doc.setFont("times", "bold");
-        doc.setTextColor(30, 41, 59);
-        doc.text("CERTIFICATE OF APPRECIATION", width / 2, 55, { align: "center" });
-
-        // Sub-ribbon or line
-        doc.setLineWidth(0.5);
-        doc.setDrawColor(180, 140, 80);
-        doc.line(width / 2 - 80, 60, width / 2 + 80, 60);
-
-        // --- 4. Content ---
-        doc.setFontSize(18);
-        doc.setFont("times", "italic");
-        doc.setTextColor(100, 116, 139);
-        doc.text("This prestigious honor is proudly presented to", width / 2, 70, { align: "center" });
-
-        // Logo before name
-        doc.addImage(LOGO_BASE64, 'PNG', width / 2 - 18, 74, 36, 36);
-
-        // DONOR NAME
-        const donorName = currentUser?.displayName || donation.donorName || "Outstanding Donor";
-        doc.setFontSize(38); // slightly smaller to accommodate logo
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(169, 29, 58); // Crimson for name
-        doc.text(donorName.toUpperCase(), width / 2, 118, { align: "center" });
-
-        // Line under donor name
-        doc.setDrawColor(200, 200, 200);
-        doc.line(width / 2 - 90, 122, width / 2 + 90, 122);
-
-        // Description
-        doc.setFontSize(16);
-        doc.setFont("times", "normal");
-        doc.setTextColor(51, 65, 85);
-        doc.text("In profound recognition of your selfless, generous, and life-saving voluntary blood donation.", width / 2, 132, { align: "center" });
-        doc.text("Your noble contribution directly helped save the precious life of", width / 2, 140, { align: "center" });
-
-        // PATIENT NAME
-        doc.setFontSize(24);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(30, 41, 59);
-        doc.text(donation.patientName.toUpperCase(), width / 2, 150, { align: "center" });
-
-
-        // Donated At
-        doc.setFontSize(14);
-        doc.setFont("times", "italic");
-        doc.setTextColor(100, 116, 139);
-        doc.text(`Donated at ${donation.hospital}, ${donation.city}`, width / 2, 160, { align: "center" });
-        doc.text(`On ${new Date(donation.completedAt || donation.createdAt).toLocaleDateString()}`, width / 2, 168, { align: "center" });
-
-        // --- 5. Footer / Signatures ---
-        doc.setFontSize(26);
-        doc.setFont("times", "italic");
-        doc.setTextColor(30, 41, 59);
-        doc.text("Ashrith", 70, 175, { align: "center" });
-
-        doc.setDrawColor(30, 41, 59);
-        doc.setLineWidth(1);
-        doc.line(40, 180, 100, 180);
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text("Director", 70, 187, { align: "center" });
-
-        // Add a "Seal" at the bottom right
-        doc.setFillColor(169, 29, 58); // Crimson
-        doc.circle(width - 70, 170, 18, 'F');
-        doc.setDrawColor(255, 255, 255);
-        doc.setLineWidth(0.5);
-        doc.circle(width - 70, 170, 16, 'S'); // White outline inner
-
-        // Inner text in seal
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(255, 255, 255);
-        doc.text("OFFICIAL", width - 70, 166, { align: "center" });
-        doc.text("LIFELINE", width - 70, 171, { align: "center" });
-        doc.text("DONOR", width - 70, 176, { align: "center" });
-
-        // Stamp Text
-        doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(150, 150, 150);
-        doc.text(`ID: ${donation.id.toUpperCase()}`, width - 25, 190, { align: "right" });
+        doc.setFontSize(14);
+        doc.setTextColor(100, 100, 100);
+        doc.text("PROUDLY PRESENTED TO", width / 2, 78, { align: "center" });
 
-        // Download Document
-        doc.save(`LifeLine-Certificate-${donorName.replace(/\s+/g, '-')}.pdf`);
+        // Donor Name
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(24);
+        doc.setTextColor(33, 33, 33);
+        const donorName = donation.donorName || userProfile?.name || currentUser?.displayName || "Life Saver";
+        doc.text(donorName.toUpperCase(), width / 2, 92, { align: "center" });
+
+        // Decorative Line
+        doc.setDrawColor(211, 47, 47);
+        doc.setLineWidth(0.8);
+        doc.line(width / 2 - 60, 96, width / 2 + 60, 96);
+
+        // Appreciation text
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(13);
+        doc.setTextColor(60, 60, 60);
+        const dateStr = donation.completedAt ? new Date(donation.completedAt).toLocaleDateString("en-US", { year: 'numeric', month: 'long', day: 'numeric' }) : "Recently";
+        doc.text(
+            `In recognition of your noble and selfless blood donation for ${donation.patientName || 'a patient in need'}\non ${dateStr} at ${donation.hospital || 'Hospital'}, saving a precious life.`,
+            width / 2,
+            110,
+            { align: "center", lineHeightFactor: 1.4 }
+        );
+
+        // Blood Group Badge
+        doc.setFillColor(255, 235, 238);
+        doc.roundedRect(width / 2 - 30, 126, 60, 18, 4, 4, 'F');
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        doc.setTextColor(211, 47, 47);
+        doc.text(`Blood Group: ${donation.bloodGroup || 'Hero'}`, width / 2, 138, { align: "center" });
+
+        // Signatures
+        doc.setDrawColor(180, 180, 180);
+        doc.setLineWidth(0.5);
+        doc.line(40, 175, 95, 175);
+        doc.line(width - 95, 175, width - 40, 175);
+
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(11);
+        doc.setTextColor(100, 100, 100);
+        doc.text("LifeLine-108 Authority", 67, 182, { align: "center" });
+        doc.text("Verified Medical Officer", width - 67, 182, { align: "center" });
+
+        // Footer
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(140, 140, 140);
+        doc.text("Verified by LifeLine-108 • Certified Emergency Blood Network", width / 2, 195, { align: "center" });
+
+        doc.save(`LifeLine_Certificate_${donation.patientName || 'Hero'}.pdf`);
     };
 
-    async function handleConfirmReceipt() {
+    async function handleConfirmFulfillment() {
         if (!selectedDonorId || !selectedReqForConfirm) return;
         const donor = foundDonors.find(d => d.id === selectedDonorId);
         if (!donor) return;
 
         try {
-            const { error: fulfillErr } = await supabase
-                .from('requests')
-                .update({
-                    status: 'fulfilled',
-                    donor_id: donor.id,
-                    donor_name: donor.name,
-                    donor_phone: donor.phone,
-                    completed_at: new Date().toISOString()
-                })
-                .eq('id', selectedReqForConfirm.id);
-            if (fulfillErr) throw fulfillErr;
+            await updateDoc(doc(db, 'requests', selectedReqForConfirm.id), {
+                status: 'fulfilled',
+                donorId: donor.id,
+                donorName: donor.name,
+                donorPhone: donor.phone || '',
+                completedAt: new Date().toISOString()
+            });
+
             alert("Confirmed! Thank you for updating.");
-            setMyRequests(myRequests.map(r => r.id === selectedReqForConfirm.id ? { ...r, status: 'fulfilled', donorId: donor.id } : r));
             setShowConfirmModal(false);
             setSelectedReqForConfirm(null);
             setSelectedDonorId('');
@@ -325,11 +257,7 @@ const MyRequests = () => {
         if (!window.confirm("Are you sure you want to cancel and delete this emergency request? This action cannot be undone.")) return;
 
         try {
-            const { error: deleteErr } = await supabase
-                .from('requests')
-                .delete()
-                .eq('id', reqId);
-            if (deleteErr) throw deleteErr;
+            await deleteDoc(doc(db, 'requests', reqId));
             alert("Request successfully cancelled and removed.");
         } catch (e) {
             console.error('Error canceling request:', e);
@@ -340,18 +268,14 @@ const MyRequests = () => {
     async function handleRejectDonor(reqId: string) {
         if (!window.confirm("Are you sure you want to cancel the donor(s)? The request will go back to searching for new donors.")) return;
         try {
-            const { error: rejectErr } = await supabase
-                .from('requests')
-                .update({
-                    status: 'pending',
-                    accepted_by: null,
-                    accepted_at: null,
-                    confirmed_by: null,
-                    donor_contact: null,
-                    accepted_donors: {}
-                })
-                .eq('id', reqId);
-            if (rejectErr) throw rejectErr;
+            await updateDoc(doc(db, 'requests', reqId), {
+                status: 'pending',
+                acceptedBy: null,
+                acceptedAt: null,
+                confirmedBy: null,
+                donorContact: null,
+                acceptedDonors: {}
+            });
             alert("Donor(s) cancelled successfully. Re-opened for new donors.");
         } catch (e) {
             console.error('Error rejecting donor:', e);
@@ -450,72 +374,72 @@ const MyRequests = () => {
                                 const statusText = isConfirmed ? 'DONOR CONFIRMED' : isAccepted ? 'DONOR ACCEPTED (WAITING CONFIRM)' : req.status.toUpperCase();
 
                                 return (
-                                    <div key={req.id} className="card glass" style={{ borderLeft: isFulfilled ? '5px solid green' : '5px solid orange' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                                    <div key={req.id} className="card" style={{ borderLeft: `6px solid ${statusColor}`, position: 'relative' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
                                             <div>
-                                                <h3 style={{ margin: 0 }}>{req.patientName} <span style={{ fontSize: '0.8rem', color: '#666' }}>({req.bloodGroup})</span></h3>
-                                                <p style={{ margin: '0.5rem 0', color: '#555' }}>
-                                                    🏥 {req.hospital}, {req.city}
+                                                <h3 style={{ margin: '0 0 0.5rem 0' }}>Patient: {req.patientName}</h3>
+                                                <p style={{ margin: '0 0 0.5rem 0', color: '#555' }}>
+                                                    <strong>Hospital:</strong> {req.hospital}, {req.city || req.state}
                                                 </p>
-                                                <small style={{ color: '#888' }}>Date: {new Date(req.createdAt).toLocaleDateString()}</small>
+                                                <p style={{ margin: '0 0 0.5rem 0', color: '#555' }}>
+                                                    <strong>Blood Group:</strong> <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{req.bloodGroup}</span> | <strong>Urgency:</strong> {req.urgency}
+                                                </p>
+                                                <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', color: '#888' }}>
+                                                    Created on: {new Date(req.createdAt).toLocaleString()}
+                                                </p>
                                             </div>
 
                                             <div style={{ textAlign: 'right' }}>
-                                                <div style={{
-                                                    fontSize: '0.9rem',
-                                                    fontWeight: 'bold',
-                                                    color: statusColor,
-                                                    marginBottom: '0.5rem',
-                                                    padding: '0.3rem 0.8rem',
-                                                    background: statusBg,
-                                                    borderRadius: '20px',
-                                                    display: 'inline-block'
-                                                }}>
+                                                <span style={{ background: statusBg, color: statusColor, padding: '6px 12px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.85rem', display: 'inline-block' }}>
                                                     {statusText}
-                                                </div>
-
-                                                {!isFulfilled && (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                        {(isConfirmed || isAccepted) && (
-                                                            <>
-                                                                <Link
-                                                                    to={`/contact/${req.id}`}
-                                                                    className="btn"
-                                                                    style={{ background: '#333', color: 'white', fontSize: '0.9rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', textDecoration: 'none' }}
-                                                                >
-                                                                    💬 Open Secure Room
-                                                                </Link>
-                                                            </>
-                                                        )}
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedReqForConfirm(req); setShowConfirmModal(true); }}
-                                                            className="btn"
-                                                            style={{ background: '#2e7d32', color: 'white', fontSize: '0.9rem', padding: '0.5rem 1rem' }}
-                                                        >
-                                                            ✅ Received Blood?
-                                                        </button>
-                                                        {(isConfirmed || isAccepted) && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRejectDonor(req.id); }}
-                                                                className="btn"
-                                                                style={{ background: '#ffa726', color: 'white', fontSize: '0.9rem', padding: '0.5rem 1rem' }}
-                                                            >
-                                                                ⚠️ Cancel Donor & Reopen
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCancelRequest(req.id); }}
-                                                            className="btn"
-                                                            style={{ background: '#f5f5f5', color: '#d32f2f', border: '1px solid #d32f2f', fontSize: '0.9rem', padding: '0.5rem 1rem' }}
-                                                        >
-                                                            ❌ Cancel Request
-                                                        </button>
-                                                    </div>
-                                                )}
+                                                </span>
                                             </div>
+                                        </div>
+
+                                        {/* Action Bar */}
+                                        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #eee', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                            {(isAccepted || isConfirmed) && (
+                                                <Link to={`/contact/${req.id}`} className="btn btn-primary" style={{ background: '#1976d2', borderColor: '#1976d2', fontSize: '0.9rem' }}>
+                                                    💬 Secure Room with Donor
+                                                </Link>
+                                            )}
+
+                                            {!isFulfilled && (
+                                                <>
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedReqForConfirm(req);
+                                                            setShowConfirmModal(true);
+                                                        }}
+                                                        className="btn btn-primary"
+                                                        style={{ background: '#2e7d32', borderColor: '#2e7d32', fontSize: '0.9rem' }}
+                                                    >
+                                                        ✅ Mark as Fulfilled
+                                                    </button>
+                                                    {(isAccepted || isConfirmed) && (
+                                                        <button
+                                                            onClick={() => handleRejectDonor(req.id)}
+                                                            className="btn btn-outline"
+                                                            style={{ borderColor: 'orange', color: '#e65100', fontSize: '0.9rem' }}
+                                                        >
+                                                            🔄 Cancel Donor & Re-open
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => handleCancelRequest(req.id)}
+                                                        className="btn btn-outline"
+                                                        style={{ borderColor: '#d32f2f', color: '#d32f2f', fontSize: '0.9rem' }}
+                                                    >
+                                                        ❌ Cancel Request
+                                                    </button>
+                                                </>
+                                            )}
+
+                                            {isFulfilled && req.donorName && (
+                                                <div style={{ color: '#2e7d32', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                                                    Fulfilled by: {req.donorName} ({req.donorPhone})
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 );
@@ -525,95 +449,110 @@ const MyRequests = () => {
                 </>
             )}
 
-            {/* CONTENT: IMPACT */}
+            {/* CONTENT: IMPACT (DONATION HISTORY) */}
             {activeTab === 'impact' && userProfile?.role === 'donor' && (
-                <>
+                <div>
                     {donationHistory.length === 0 ? (
                         <div className="card" style={{ padding: '3rem', textAlign: 'center', color: '#666' }}>
-                            <p>You haven't completed any donations yet.</p>
-                            <p style={{ fontSize: '0.9rem' }}>Once you donate and the patient confirms, it will appear here.</p>
+                            <p>No fulfilled donations recorded yet. When a requester marks you as their hero, your certificate will appear here!</p>
                         </div>
                     ) : (
                         <div style={{ display: 'grid', gap: '1.5rem' }}>
-                            {donationHistory.map(h => (
-                                <div key={h.id} style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid #d32f2f', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-                                        <div>
-                                            <h3 style={{ margin: 0, color: '#d32f2f' }}>Helped: {h.patientName}</h3>
-                                            <p style={{ margin: '0.5rem 0', color: '#555' }}>
-                                                📍 {h.hospital}, {h.city}
-                                            </p>
-                                            <small style={{ color: '#888' }}>On {new Date(h.completedAt || h.createdAt).toLocaleDateString()}</small>
-                                        </div>
-                                        <div>
-                                            <button
-                                                onClick={() => generateCertificate(h)}
-                                                className="btn"
-                                                style={{ background: '#2e7d32', color: 'white', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                                            >
-                                                <span>🏅</span> Download Certificate
-                                            </button>
-                                        </div>
+                            {donationHistory.map(item => (
+                                <div key={item.id} className="card" style={{ borderLeft: '6px solid #2e7d32', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                                    <div>
+                                        <h3 style={{ margin: '0 0 0.5rem 0', color: '#2e7d32' }}>🎉 Life Saved: {item.patientName}</h3>
+                                        <p style={{ margin: '0 0 0.3rem 0', color: '#555' }}><strong>Hospital:</strong> {item.hospital}</p>
+                                        <p style={{ margin: '0 0 0.3rem 0', color: '#555' }}><strong>Blood Group:</strong> {item.bloodGroup}</p>
+                                        <p style={{ margin: 0, fontSize: '0.85rem', color: '#888' }}>Fulfilled on: {item.completedAt ? new Date(item.completedAt).toLocaleDateString() : 'N/A'}</p>
+                                    </div>
+                                    <div>
+                                        <button
+                                            onClick={() => generateCertificate(item)}
+                                            className="btn btn-primary"
+                                            style={{ background: '#2e7d32', borderColor: '#2e7d32', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                        >
+                                            📜 Download Appreciation Certificate
+                                        </button>
                                     </div>
                                 </div>
                             ))}
                         </div>
                     )}
-                </>
+                </div>
             )}
 
-            {/* CONFIRMATION MODAL */}
-            {
-                showConfirmModal && (
-                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                        <div style={{ background: 'white', padding: '2rem', borderRadius: '12px', width: '90%', maxWidth: '450px' }}>
-                            <h3>Confirm Blood Receipt</h3>
-                            <p>Who donated blood for this request?</p>
+            {/* MODAL: MARK FULFILLED */}
+            {showConfirmModal && selectedReqForConfirm && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '1rem' }}>
+                    <div className="card" style={{ maxWidth: '500px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <h3 style={{ marginTop: 0, color: '#2e7d32' }}>Confirm Blood Donation Fulfillment</h3>
+                        <p style={{ fontSize: '0.9rem', color: '#666' }}>
+                            Select the registered donor who donated blood for <strong>{selectedReqForConfirm.patientName}</strong> so they receive their official appreciation certificate.
+                        </p>
 
-                            <input
-                                type="text"
-                                placeholder="Search donor name or phone..."
-                                value={donorSearchTerm}
-                                autoFocus
-                                onChange={(e) => setDonorSearchTerm(e.target.value)}
-                                style={{ width: '100%', padding: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '1rem' }}
-                            />
+                        <input
+                            type="text"
+                            placeholder="Search donor by name or phone..."
+                            value={donorSearchTerm}
+                            onChange={e => setDonorSearchTerm(e.target.value)}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginBottom: '1rem' }}
+                        />
 
-                            <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #eee', marginBottom: '1rem', borderRadius: '4px' }}>
-                                {foundDonors.length === 0 && <p style={{ padding: '0.5rem', color: '#888' }}>No donors found...</p>}
-                                {foundDonors.map(d => (
+                        <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '8px', marginBottom: '1.5rem', padding: '0.5rem' }}>
+                            {foundDonors.length === 0 ? (
+                                <p style={{ color: '#888', textAlign: 'center', margin: '1rem 0' }}>No donors found</p>
+                            ) : (
+                                foundDonors.map(donor => (
                                     <div
-                                        key={d.id}
-                                        onClick={() => setSelectedDonorId(d.id)}
+                                        key={donor.id}
+                                        onClick={() => setSelectedDonorId(donor.id)}
                                         style={{
-                                            padding: '0.8rem',
-                                            borderBottom: '1px solid #eee',
+                                            padding: '0.75rem',
+                                            borderRadius: '6px',
                                             cursor: 'pointer',
-                                            background: selectedDonorId === d.id ? '#e8f5e9' : 'white'
+                                            background: selectedDonorId === donor.id ? '#e8f5e9' : 'transparent',
+                                            border: selectedDonorId === donor.id ? '1px solid #2e7d32' : '1px solid transparent',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            marginBottom: '0.3rem'
                                         }}
                                     >
-                                        <strong>{d.name}</strong> <span style={{ fontSize: '0.8rem', color: '#666' }}>({d.bloodGroup})</span>
-                                        <br /><small>{d.phone}</small>
+                                        <div>
+                                            <strong>{donor.name}</strong> ({donor.bloodGroup})<br />
+                                            <small style={{ color: '#666' }}>{donor.city || donor.state}</small>
+                                        </div>
+                                        {selectedDonorId === donor.id && <span style={{ color: '#2e7d32', fontWeight: 'bold' }}>✓ Selected</span>}
                                     </div>
-                                ))}
-                            </div>
+                                ))
+                            )}
+                        </div>
 
-                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                                <button onClick={() => setShowConfirmModal(false)} className="btn btn-outline" style={{ padding: '0.5rem 1rem' }}>Cancel</button>
-                                <button
-                                    onClick={handleConfirmReceipt}
-                                    className="btn"
-                                    disabled={!selectedDonorId}
-                                    style={{ background: '#2e7d32', color: 'white', padding: '0.5rem 1rem', opacity: selectedDonorId ? 1 : 0.5 }}
-                                >
-                                    Confirm & Update
-                                </button>
-                            </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                            <button
+                                onClick={() => {
+                                    setShowConfirmModal(false);
+                                    setSelectedReqForConfirm(null);
+                                    setSelectedDonorId('');
+                                }}
+                                className="btn btn-outline"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                disabled={!selectedDonorId}
+                                onClick={handleConfirmFulfillment}
+                                className="btn btn-primary"
+                                style={{ background: '#2e7d32', borderColor: '#2e7d32' }}
+                            >
+                                Confirm & Award Certificate
+                            </button>
                         </div>
                     </div>
-                )
-            }
-        </div >
+                </div>
+            )}
+        </div>
     );
 };
 

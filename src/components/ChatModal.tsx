@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../services/supabase';
+import { collection, query, where, onSnapshot, addDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 interface ChatModalProps {
     requestId: string;
@@ -14,51 +15,50 @@ const ChatModal: React.FC<ChatModalProps> = ({ requestId, currentUserId, closeMo
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const fetchMessages = async () => {
-            const { data, error } = await supabase
-                .from('messages')
-                .select('*')
-                .eq('request_id', requestId)
-                .order('created_at', { ascending: true });
-            if (data && !error) {
-                setMessages(data.map(m => ({
+        if (!requestId) return;
+
+        const q = query(
+            collection(db, 'messages'),
+            where('requestId', '==', requestId)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach((docSnap) => {
+                const m = docSnap.data();
+                list.push({
+                    id: docSnap.id,
                     ...m,
-                    senderId: m.sender_id,
-                    createdAt: m.created_at
-                })));
-                setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-            }
-        };
+                    senderId: m.senderId || m.sender_id,
+                    createdAt: m.createdAt || m.created_at
+                });
+            });
+            list.sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+            setMessages(list);
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        }, (err) => {
+            console.error("ChatModal error:", err);
+        });
 
-        fetchMessages();
-
-        const channel = supabase
-            .channel(`chat-${requestId}`)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `request_id=eq.${requestId}` }, () => {
-                fetchMessages();
-            })
-            .subscribe();
-
-        return () => {
-            channel.unsubscribe();
-        };
+        return () => unsubscribe();
     }, [requestId]);
 
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newMessage.trim()) return;
+        if (!newMessage.trim() || !requestId) return;
 
         try {
-            const { error } = await supabase.from('messages').insert({
-                request_id: requestId,
-                text: newMessage,
-                sender_id: currentUserId,
-                created_at: Date.now()
-            });
-            if (error) throw error;
+            const textToSend = newMessage.trim();
             setNewMessage('');
+
+            await addDoc(collection(db, 'messages'), {
+                requestId: requestId,
+                text: textToSend,
+                senderId: currentUserId,
+                createdAt: Date.now()
+            });
         } catch (error) {
-            console.error('Error sending message:', error);
+            console.error('Error sending message in modal:', error);
         }
     };
 

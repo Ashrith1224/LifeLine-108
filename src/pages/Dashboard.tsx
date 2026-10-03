@@ -1,44 +1,39 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useNavigate } from 'react-router-dom';
 import { FaUser, FaTint, FaMapMarkerAlt, FaPhone, FaShieldAlt, FaIdBadge } from 'react-icons/fa';
-
-
 
 const Dashboard = () => {
     const { currentUser, logout, sendEmailVerification } = useAuth();
     const [profile, setProfile] = useState<any>(null);
     const navigate = useNavigate();
-
-    // Verification State
     const [msg, setMsg] = useState('');
-
-
-
 
     useEffect(() => {
         async function fetchProfile() {
             if (currentUser) {
-                const { data, error } = await supabase.from('profiles').select('*').eq('id', currentUser.uid).single();
-                if (data && !error) {
-                    setProfile({
-                        ...data,
-                        bloodGroup: data.blood_group,
-                        donorType: data.donor_type,
-                        kycStatus: data.kyc_status,
-                        emailVerified: data.email_verified,
-                        createdAt: data.created_at
-                    });
+                try {
+                    const docSnap = await getDoc(doc(db, 'profiles', currentUser.uid));
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setProfile({
+                            ...data,
+                            bloodGroup: data.bloodGroup || data.blood_group,
+                            donorType: data.donorType || data.donor_type,
+                            kycStatus: data.kycStatus || data.kyc_status,
+                            emailVerified: data.emailVerified,
+                            createdAt: data.createdAt || data.created_at
+                        });
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch profile in dashboard:", e);
                 }
             }
         }
         fetchProfile();
     }, [currentUser]);
-
-
-
-
 
     async function handleLogout() {
         try {
@@ -58,7 +53,6 @@ const Dashboard = () => {
             setMsg("Error sending email: " + e.message);
         }
     }
-
 
     if (!currentUser) return <div className="container">Please log in.</div>;
 
@@ -144,7 +138,7 @@ const Dashboard = () => {
                                 <button
                                     className="btn"
                                     style={{
-                                        background: profile.available ? '#white' : '#2e7d32',
+                                        background: profile.available ? 'white' : '#2e7d32',
                                         color: profile.available ? '#d32f2f' : 'white',
                                         border: profile.available ? '2px solid #d32f2f' : 'none',
                                         minWidth: '180px',
@@ -157,8 +151,7 @@ const Dashboard = () => {
                                         if (!currentUser.emailVerified) return alert("Verify email first.");
                                         try {
                                             const newStatus = !profile.available;
-                                            const { error } = await supabase.from('profiles').update({ available: newStatus }).eq('id', currentUser.uid);
-                                            if (error) throw error;
+                                            await updateDoc(doc(db, 'profiles', currentUser.uid), { available: newStatus });
                                             setProfile({ ...profile, available: newStatus });
                                         } catch (e) { console.error(e); }
                                     }}
@@ -166,24 +159,12 @@ const Dashboard = () => {
                                     {profile.available ? 'Go Offline' : 'Go Online'}
                                 </button>
                             </div>
-
                         )}
-
-
-
-
-
-                        {/* 4. Removed Feeds from Dashboard explicitly per request */}
                     </div>
                 )}
-
             </div>
-
-
-        </div >
+        </div>
     );
 };
 
 export default Dashboard;
-
-

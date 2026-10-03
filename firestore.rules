@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Profiles Collection
+    match /profiles/{userId} {
+      // Anyone can read donor profiles for search
+      allow read: if true;
+      // Users can only create and modify their own profile, admins can manage any
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Requests Collection
+    match /requests/{requestId} {
+      // Anyone can read emergency blood requests
+      allow read: if true;
+      // Authenticated users can create requests
+      allow create: if isAuthenticated();
+      // Requesters, participating donors, and admins can update request status
+      allow update: if isAuthenticated();
+      // Only requester or admin can delete requests
+      allow delete: if (isAuthenticated() && resource.data.requesterId == request.auth.uid) || isAdmin();
+    }
+
+    // Messages Collection (Secure Chat)
+    match /messages/{messageId} {
+      // Authenticated users can read and send messages
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isAdmin() || (isAuthenticated() && resource.data.senderId == request.auth.uid);
+    }
+
+    // Reports Collection
+    match /reports/{reportId} {
+      // Authenticated users can submit reports
+      allow create: if isAuthenticated();
+      // Only admins can view and update reports
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

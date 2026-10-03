@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useLocation, Link } from 'react-router-dom';
 
 const FloatingNotifier = () => {
@@ -12,45 +13,43 @@ const FloatingNotifier = () => {
         if (!currentUser) return;
         const nowAtLoad = Date.now();
 
-        const fetchNotifications = async () => {
-            const { data, error } = await supabase
-                .from('requests')
-                .select('*')
-                .eq('status', 'confirmed')
-                .or(`requester_id.eq.${currentUser.uid},confirmed_by.eq.${currentUser.uid}`);
+        const q = query(
+            collection(db, 'requests'),
+            where('status', '==', 'confirmed')
+        );
 
-            if (data && !error) {
-                data.forEach((r: any) => {
-                    const lastMsgAt = Number(r.last_message_at) || 0;
-                    if (lastMsgAt && r.last_message_by !== currentUser.uid && lastMsgAt > nowAtLoad) {
-                        if (location.pathname === `/contact/${r.id}`) return;
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            snapshot.forEach((docSnap) => {
+                const r = docSnap.data();
+                const requesterId = r.requesterId || r.requester_id;
+                const confirmedBy = r.confirmedBy || r.confirmed_by;
+
+                // Only requests where the current user is requester or confirmed donor
+                if (requesterId === currentUser.uid || confirmedBy === currentUser.uid) {
+                    const lastMsgAt = Number(r.lastMessageAt || r.last_message_at) || 0;
+                    const lastMsgBy = r.lastMessageBy || r.last_message_by;
+                    const lastMsgText = r.lastMessageText || r.last_message_text;
+
+                    if (lastMsgAt && lastMsgBy !== currentUser.uid && lastMsgAt > nowAtLoad) {
+                        if (location.pathname === `/contact/${docSnap.id}`) return;
 
                         setRecentMessages((prev: any[]) => {
-                            const withoutOld = prev.filter(m => m.id !== r.id);
+                            const withoutOld = prev.filter(m => m.id !== docSnap.id);
                             return [...withoutOld, {
-                                id: r.id,
-                                text: r.last_message_text || 'New incoming activity...',
+                                id: docSnap.id,
+                                text: lastMsgText || 'New incoming activity...',
                                 time: lastMsgAt,
-                                name: r.requester_id === currentUser.uid ? r.donor_name : r.patient_name
+                                name: requesterId === currentUser.uid ? (r.donorName || r.donor_name) : (r.patientName || r.patient_name)
                             }];
                         });
                     }
-                });
-            }
-        };
+                }
+            });
+        }, (err) => {
+            console.error("FloatingNotifier error:", err);
+        });
 
-        fetchNotifications();
-
-        const channel = supabase
-            .channel('floating-notifier-channel')
-            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'requests' }, () => {
-                fetchNotifications();
-            })
-            .subscribe();
-
-        return () => {
-            channel.unsubscribe();
-        };
+        return () => unsubscribe();
     }, [currentUser, location.pathname]);
 
     // Cleanup old messages after 15 seconds

@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { supabase } from '../services/supabase';
+import { useState, useEffect } from 'react';
+import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
@@ -7,13 +8,14 @@ import { getAllStates, getDistricts } from 'india-state-district';
 
 const EmergencyRequest = () => {
     const { currentUser } = useAuth();
+    const location = useLocation();
     const [patientName, setPatientName] = useState('');
-    const [bloodGroup, setBloodGroup] = useState('A+');
+    const [bloodGroup, setBloodGroup] = useState(() => location.state?.prefilledBloodGroup || 'A+');
     const [hospital, setHospital] = useState('');
     const [stateCode, setStateCode] = useState('');
     const [stateName, setStateName] = useState('');
     const [district, setDistrict] = useState('');
-    const [city, setCity] = useState('');
+    const [city, setCity] = useState(() => location.state?.prefilledCity || '');
     const [contact, setContact] = useState('');
     const [urgency, setUrgency] = useState('Critical');
 
@@ -21,30 +23,16 @@ const EmergencyRequest = () => {
 
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
-    const [targetedDonorId, setTargetedDonorId] = useState<string | null>(null);
-    const [targetedDonorName, setTargetedDonorName] = useState<string | null>(null);
+    const targetedDonorId = location.state?.targetedDonorId || null;
+    const targetedDonorName = location.state?.targetedDonorName || null;
     const navigate = useNavigate();
-    const location = useLocation();
-
-    // Init from location state if passed
-    useState(() => {
-        if (location.state?.prefilledCity) {
-            setCity(location.state.prefilledCity);
-        }
-        if (location.state?.prefilledBloodGroup) {
-            setBloodGroup(location.state.prefilledBloodGroup);
-        }
-        if (location.state?.targetedDonorId) {
-            setTargetedDonorId(location.state.targetedDonorId);
-            setTargetedDonorName(location.state.targetedDonorName);
-        }
-    });
 
     // Auto-fill from Profile
-    useState(() => {
+    useEffect(() => {
         if (currentUser) {
-            supabase.from('profiles').select('*').eq('id', currentUser.uid).single().then(({ data, error }) => {
-                if (data && !error) {
+            getDoc(doc(db, 'profiles', currentUser.uid)).then((docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
                     if (data.name) setPatientName(data.name);
 
                     // Autofill state and district
@@ -60,11 +48,12 @@ const EmergencyRequest = () => {
                         const digits = data.phone.replace(/\D/g, '');
                         setContact(digits.slice(-10)); // Ensure only the 10-digit number is populated
                     }
-                    if (data.blood_group && !location.state?.prefilledBloodGroup) setBloodGroup(data.blood_group);
+                    const userBloodGroup = data.bloodGroup || data.blood_group;
+                    if (userBloodGroup && !location.state?.prefilledBloodGroup) setBloodGroup(userBloodGroup);
                 }
-            });
+            }).catch(console.error);
         }
-    });
+    }, [currentUser, location.state]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -76,9 +65,9 @@ const EmergencyRequest = () => {
         setLoading(true);
 
         try {
-            const { error: insertError } = await supabase.from('requests').insert({
-                patient_name: patientName,
-                blood_group: bloodGroup,
+            await addDoc(collection(db, 'requests'), {
+                patientName: patientName,
+                bloodGroup: bloodGroup,
                 hospital,
                 state: stateName,
                 district,
@@ -86,10 +75,23 @@ const EmergencyRequest = () => {
                 contact,
                 urgency,
                 status: 'pending',
-                requester_id: currentUser?.uid,
-                targeted_donor_id: targetedDonorId || null
+                requesterId: currentUser?.uid || null,
+                targetedDonorId: targetedDonorId || null,
+                donorId: null,
+                donorName: null,
+                donorPhone: null,
+                completedAt: null,
+                acceptedBy: null,
+                acceptedAt: null,
+                confirmedBy: null,
+                donorContact: null,
+                acceptedDonors: {},
+                lastMessageAt: null,
+                lastMessageBy: null,
+                lastMessageText: null,
+                createdAt: new Date().toISOString()
             });
-            if (insertError) throw insertError;
+
             setSuccess(true);
             setTimeout(() => {
                 navigate('/');
@@ -166,7 +168,6 @@ const EmergencyRequest = () => {
                                 ))}
                             </select>
                         </div>
-
                         <div>
                             <label style={{ fontWeight: '500' }}>District</label>
                             <select
@@ -177,7 +178,7 @@ const EmergencyRequest = () => {
                                 onChange={(e) => setDistrict(e.target.value)}
                             >
                                 <option value="" disabled>Select District</option>
-                                {availableDistricts.map(d => (
+                                {availableDistricts.map((d) => (
                                     <option key={d} value={d}>{d}</option>
                                 ))}
                             </select>
@@ -186,18 +187,25 @@ const EmergencyRequest = () => {
 
                     <div>
                         <label style={{ fontWeight: '500' }}>City / Local Area</label>
-                        <input type="text" required placeholder="e.g. Area name" style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }} value={city} onChange={(e) => setCity(e.target.value)} />
+                        <input
+                            type="text"
+                            required
+                            placeholder="e.g. Indiranagar, Sector 15"
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
+                            value={city}
+                            onChange={(e) => setCity(e.target.value)}
+                        />
                     </div>
 
                     <div>
-                        <label style={{ fontWeight: '500' }}>Contact Number</label>
+                        <label style={{ fontWeight: '500' }}>Contact Number (Hidden from public)</label>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
                             <span style={{ padding: '0.75rem', background: '#eee', borderRadius: '8px', border: '1px solid #ccc', color: '#555' }}>+91</span>
                             <input
                                 type="tel"
                                 required
-                                maxLength={10}
                                 placeholder="9876543210"
+                                maxLength={10}
                                 style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
                                 value={contact}
                                 onChange={(e) => setContact(e.target.value.replace(/\D/g, ''))}
@@ -208,19 +216,19 @@ const EmergencyRequest = () => {
                     <div>
                         <label style={{ fontWeight: '500' }}>Urgency Level</label>
                         <select style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
-                            <option value="Moderate">Moderate (Need within 24hrs)</option>
-                            <option value="High">High (Need within 6hrs)</option>
-                            <option value="Critical">Critical (Immediate)</option>
+                            <option value="Critical">Critical (Within 1 hour)</option>
+                            <option value="High">High (Within 6 hours)</option>
+                            <option value="Medium">Medium (Within 24 hours)</option>
                         </select>
                     </div>
 
-                    <button disabled={loading} className="btn" type="submit" style={{ width: '100%', marginTop: '1rem', background: '#d32f2f', color: 'white', fontSize: '1.1rem' }}>
-                        {loading ? 'Submitting...' : 'Submit Emergency Request'}
+                    <button disabled={loading} type="submit" className="btn btn-primary" style={{ marginTop: '1rem', background: '#d32f2f', borderColor: '#d32f2f' }}>
+                        {loading ? 'Submitting...' : 'Broadcast Emergency Request'}
                     </button>
                 </form>
             </div>
         </div>
     );
-}
+};
 
 export default EmergencyRequest;

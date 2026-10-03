@@ -1,7 +1,8 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
-import { supabase } from '../services/supabase';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 const Navbar = () => {
     const { currentUser, isProfileComplete, logout, userRole } = useAuth();
@@ -36,11 +37,11 @@ const Navbar = () => {
 
     useEffect(() => {
         if (currentUser) {
-            supabase.from('profiles').select('*').eq('id', currentUser.uid).single().then(({ data, error }) => {
-                if (data && !error) {
-                    setProfile(data);
+            getDoc(doc(db, 'profiles', currentUser.uid)).then((docSnap) => {
+                if (docSnap.exists()) {
+                    setProfile(docSnap.data());
                 }
-            });
+            }).catch(console.error);
         }
     }, [currentUser]);
 

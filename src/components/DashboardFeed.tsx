@@ -1,88 +1,87 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../services/supabase';
+import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { Link } from 'react-router-dom';
 
 const DashboardFeed = ({ role, city, userState, userId, userBloodGroup, donorPhone }: { role: string, city: string, userState?: string, userId: string, userBloodGroup?: string, donorPhone?: string }) => {
     const [items, setItems] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !!(city || userState) && role === 'donor');
+    const [prevDeps, setPrevDeps] = useState({ role, city, userState, userId, userBloodGroup });
+
+    if (
+        role !== prevDeps.role ||
+        city !== prevDeps.city ||
+        userState !== prevDeps.userState ||
+        userId !== prevDeps.userId ||
+        userBloodGroup !== prevDeps.userBloodGroup
+    ) {
+        setPrevDeps({ role, city, userState, userId, userBloodGroup });
+        setLoading(role === 'donor' && !!(city || userState));
+    }
 
     useEffect(() => {
         if (!city && !userState) {
-            setLoading(false);
+            return;
+        }
+        if (role !== 'donor') {
             return;
         }
 
-        let unsubscribe = () => { };
+        const q = query(
+            collection(db, 'requests'),
+            where('status', 'in', ['pending', 'accepted', 'confirmed'])
+        );
 
-        setLoading(true);
-        if (role === 'donor') {
-            const fetchNearbyRequests = async () => {
-                const { data, error } = await supabase
-                    .from('requests')
-                    .select('*')
-                    .in('status', ['pending', 'accepted', 'confirmed']);
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach((docSnap) => {
+                const r = docSnap.data();
+                const bR = r.bloodGroup || r.blood_group;
+                const bD = userBloodGroup;
+                let isCompatible = false;
+                if (bD === 'O-') isCompatible = true;
+                else if (bD === 'O+' && ['A+', 'B+', 'AB+', 'O+'].includes(bR)) isCompatible = true;
+                else if (bD === 'A-' && ['A+', 'A-', 'AB+', 'AB-'].includes(bR)) isCompatible = true;
+                else if (bD === 'A+' && ['A+', 'AB+'].includes(bR)) isCompatible = true;
+                else if (bD === 'B-' && ['B+', 'B-', 'AB+', 'AB-'].includes(bR)) isCompatible = true;
+                else if (bD === 'B+' && ['B+', 'AB+'].includes(bR)) isCompatible = true;
+                else if (bD === 'AB-' && ['AB+', 'AB-'].includes(bR)) isCompatible = true;
+                else if (bD === 'AB+' && bR === 'AB+') isCompatible = true;
 
-                if (data && !error) {
-                    const list: any[] = [];
-                    data.forEach((r: any) => {
-                        const bR = r.blood_group;
-                        const bD = userBloodGroup;
-                        let isCompatible = false;
-                        if (bD === 'O-') isCompatible = true;
-                        else if (bD === 'O+' && ['A+', 'B+', 'AB+', 'O+'].includes(bR)) isCompatible = true;
-                        else if (bD === 'A-' && ['A+', 'A-', 'AB+', 'AB-'].includes(bR)) isCompatible = true;
-                        else if (bD === 'A+' && ['A+', 'AB+'].includes(bR)) isCompatible = true;
-                        else if (bD === 'B-' && ['B+', 'B-', 'AB+', 'AB-'].includes(bR)) isCompatible = true;
-                        else if (bD === 'B+' && ['B+', 'AB+'].includes(bR)) isCompatible = true;
-                        else if (bD === 'AB-' && ['AB+', 'AB-'].includes(bR)) isCompatible = true;
-                        else if (bD === 'AB+' && bR === 'AB+') isCompatible = true;
+                const isLocationMatch = (r.state && userState) ? (r.state === userState) : (r.city && city && r.city.toLowerCase() === city.toLowerCase());
+                const requesterId = r.requesterId || r.requester_id;
+                const targetedDonorId = r.targetedDonorId || r.targeted_donor_id;
 
-                        const isLocationMatch = (r.state && userState) ? (r.state === userState) : (r.city && city && r.city.toLowerCase() === city.toLowerCase());
-
-                        if (r.requester_id !== userId && isLocationMatch && isCompatible) {
-                            if (r.targeted_donor_id && r.targeted_donor_id !== userId) return;
-                            list.push({
-                                ...r,
-                                patientName: r.patient_name,
-                                bloodGroup: r.blood_group,
-                                requesterId: r.requester_id,
-                                targetedDonorId: r.targeted_donor_id,
-                                createdAt: r.created_at,
-                                donorId: r.donor_id,
-                                donorName: r.donor_name,
-                                donorPhone: r.donor_phone,
-                                completedAt: r.completed_at,
-                                acceptedBy: r.accepted_by,
-                                acceptedAt: r.accepted_at,
-                                confirmedBy: r.confirmed_by,
-                                donorContact: r.donor_contact,
-                                acceptedDonors: r.accepted_donors,
-                                isCompatible,
-                                isLocationMatch
-                            });
-                        }
+                if (requesterId !== userId && isLocationMatch && isCompatible) {
+                    if (targetedDonorId && targetedDonorId !== userId) return;
+                    list.push({
+                        id: docSnap.id,
+                        ...r,
+                        patientName: r.patientName || r.patient_name,
+                        bloodGroup: bR,
+                        requesterId: requesterId,
+                        targetedDonorId: targetedDonorId,
+                        createdAt: r.createdAt || r.created_at,
+                        donorId: r.donorId || r.donor_id,
+                        donorName: r.donorName || r.donor_name,
+                        donorPhone: r.donorPhone || r.donor_phone,
+                        completedAt: r.completedAt || r.completed_at,
+                        acceptedBy: r.acceptedBy || r.accepted_by,
+                        acceptedAt: r.acceptedAt || r.accepted_at,
+                        confirmedBy: r.confirmedBy || r.confirmed_by,
+                        donorContact: r.donorContact || r.donor_contact,
+                        acceptedDonors: r.acceptedDonors || r.accepted_donors || {},
+                        isCompatible,
+                        isLocationMatch
                     });
-                    setItems(list);
                 }
-                setLoading(false);
-            };
-
-            fetchNearbyRequests();
-
-            const channel = supabase
-                .channel('nearby-requests-channel')
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => {
-                    fetchNearbyRequests();
-                })
-                .subscribe();
-
-            unsubscribe = () => {
-                channel.unsubscribe();
-            };
-        } else {
-            setItems([]);
+            });
+            setItems(list);
             setLoading(false);
-        }
+        }, (err) => {
+            console.error("DashboardFeed onSnapshot error:", err);
+            setLoading(false);
+        });
 
         return () => unsubscribe();
     }, [role, city, userState, userId, userBloodGroup]);
@@ -115,15 +114,15 @@ const DashboardFeed = ({ role, city, userState, userId, userBloodGroup, donorPho
 export default DashboardFeed;
 
 const RequestCard = ({ item, userId, donorPhone, userBloodGroup }: { item: any, userId: string, donorPhone?: string, userBloodGroup?: string }) => {
-    const [timeLeft, setTimeLeft] = useState('');
-    const [ticker, setTicker] = useState(0);
+    const [now, setNow] = useState(() => Date.now());
 
     useEffect(() => {
-        const i = setInterval(() => setTicker((t: number) => t + 1), 1000);
+        const i = setInterval(() => {
+            setNow(Date.now());
+        }, 1000);
         return () => clearInterval(i);
     }, []);
 
-    const now = Date.now();
     const fiveMins = 5 * 60 * 1000;
 
     const isLegacyAccepted = item.status === 'accepted' && item.acceptedBy === userId;
@@ -143,45 +142,24 @@ const RequestCard = ({ item, userId, donorPhone, userBloodGroup }: { item: any, 
         }
     }
 
-    useEffect(() => {
-        if (isMyAcceptExpired && item.status === 'pending' && item.acceptedDonors?.[userId]) {
-            const updatedDonors = { ...item.acceptedDonors };
-            delete updatedDonors[userId];
-            supabase.from('requests').update({
-                accepted_donors: updatedDonors
-            }).eq('id', item.id).then(({ error }) => { if (error) console.error(error); });
-        } else if (isMyAcceptExpired && isLegacyAccepted) {
-            supabase.from('requests').update({
-                status: 'pending',
-                accepted_by: null,
-                accepted_at: null
-            }).eq('id', item.id).then(({ error }) => { if (error) console.error(error); });
+    let timeLeft = '';
+    if (computedStatus === 'accepted' && myAcceptTime) {
+        const remaining = myAcceptTime + fiveMins - now;
+        if (remaining <= 0) {
+            timeLeft = 'Expired';
+        } else {
+            const m = Math.floor(remaining / 60000);
+            const s = Math.floor((remaining % 60000) / 1000);
+            timeLeft = `${m}:${s < 10 ? '0' : ''}${s}`;
         }
-    }, [isMyAcceptExpired, item.status, isLegacyAccepted, item.id, userId, item.acceptedDonors]);
-
-    useEffect(() => {
-        if (computedStatus === 'accepted' && myAcceptTime) {
-            const remaining = myAcceptTime + fiveMins - now;
-            if (remaining <= 0) {
-                setTimeLeft('Expired');
-            } else {
-                const m = Math.floor(remaining / 60000);
-                const s = Math.floor((remaining % 60000) / 1000);
-                setTimeLeft(`${m}:${s < 10 ? '0' : ''}${s}`);
-            }
-        }
-    }, [ticker, computedStatus, myAcceptTime, now, fiveMins]);
+    }
 
     const handleAccept = async () => {
         try {
             const updatedDonors = { ...item.acceptedDonors, [userId]: Date.now() };
-            const { error } = await supabase
-                .from('requests')
-                .update({
-                    accepted_donors: updatedDonors
-                })
-                .eq('id', item.id);
-            if (error) throw error;
+            await updateDoc(doc(db, 'requests', item.id), {
+                acceptedDonors: updatedDonors
+            });
         } catch (e) {
             console.error('Failed to accept:', e);
             alert('Failed to accept. Please try again.');
@@ -190,15 +168,11 @@ const RequestCard = ({ item, userId, donorPhone, userBloodGroup }: { item: any, 
 
     const handleConfirm = async () => {
         try {
-            const { error } = await supabase
-                .from('requests')
-                .update({
-                    status: 'confirmed',
-                    confirmed_by: userId,
-                    donor_contact: donorPhone || null
-                })
-                .eq('id', item.id);
-            if (error) throw error;
+            await updateDoc(doc(db, 'requests', item.id), {
+                status: 'confirmed',
+                confirmedBy: userId,
+                donorContact: donorPhone || null
+            });
         } catch (e) {
             console.error('Error confirming:', e);
         }
@@ -207,23 +181,17 @@ const RequestCard = ({ item, userId, donorPhone, userBloodGroup }: { item: any, 
     const handleCancel = async () => {
         try {
             if (isLegacyAccepted) {
-                await supabase
-                    .from('requests')
-                    .update({
-                        status: 'pending',
-                        accepted_by: null,
-                        accepted_at: null
-                    })
-                    .eq('id', item.id);
+                await updateDoc(doc(db, 'requests', item.id), {
+                    status: 'pending',
+                    acceptedBy: null,
+                    acceptedAt: null
+                });
             } else {
                 const updatedDonors = { ...item.acceptedDonors };
                 delete updatedDonors[userId];
-                await supabase
-                    .from('requests')
-                    .update({
-                        accepted_donors: updatedDonors
-                    })
-                    .eq('id', item.id);
+                await updateDoc(doc(db, 'requests', item.id), {
+                    acceptedDonors: updatedDonors
+                });
             }
         } catch (e) {
             console.error('Error canceling:', e);
@@ -235,17 +203,14 @@ const RequestCard = ({ item, userId, donorPhone, userBloodGroup }: { item: any, 
         try {
             const updatedDonors = { ...item.acceptedDonors };
             delete updatedDonors[userId];
-            await supabase
-                .from('requests')
-                .update({
-                    status: 'pending',
-                    confirmed_by: null,
-                    donor_contact: null,
-                    accepted_by: null,
-                    accepted_at: null,
-                    accepted_donors: updatedDonors
-                })
-                .eq('id', item.id);
+            await updateDoc(doc(db, 'requests', item.id), {
+                status: 'pending',
+                confirmedBy: null,
+                donorContact: null,
+                acceptedBy: null,
+                acceptedAt: null,
+                acceptedDonors: updatedDonors
+            });
         } catch (e) {
             console.error('Error canceling confirmation:', e);
         }

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
-import { supabase } from '../services/supabase';
-import { FaMapMarker, FaTint, FaPhone } from 'react-icons/fa';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
+import { FaMapMarker, FaPhone } from 'react-icons/fa';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { getAllStates, getDistricts } from 'india-state-district';
 import { MOCK_BLOOD_BANKS } from '../data/bloodBanks';
@@ -63,13 +64,13 @@ const FindDonor = () => {
                     if (!reason) return;
 
                     try {
-                        const { error: reportErr } = await supabase.from('reports').insert({
-                            target_user_id: donor.id,
-                            target_name: donor.name,
+                        await addDoc(collection(db, 'reports'), {
+                            targetUserId: donor.id,
+                            targetName: donor.name,
                             reason,
-                            status: 'pending'
+                            status: 'pending',
+                            timestamp: new Date().toISOString()
                         });
-                        if (reportErr) throw reportErr;
                         alert("Report submitted. Admins will review it shortly.");
                     } catch (e) {
                         console.error(e);
@@ -106,13 +107,6 @@ const FindDonor = () => {
         setDonors([]);
 
         try {
-            // Basic query: exact match on blood group and city (case-sensitive for now, better to normalize)
-            // In a real app, use a more robust search (e.g. Algolia/Typesense) or normalize strings.
-            // For now, we assume users type city nicely or we lowercase it on save/search. (Not implemented here, keeping it simple).
-
-            // To make it slightly better, let's just query by Role and Blood Group first, then filter by City client-side (if city is entered).
-            // This avoids complex composite indexes for now.
-
             const getCompatibleBloodGroups = (bg: string) => {
                 switch (bg) {
                     case 'A+': return ['A+', 'A-', 'O+', 'O-'];
@@ -129,80 +123,85 @@ const FindDonor = () => {
 
             const compatibleGroups = getCompatibleBloodGroups(bloodGroup);
 
-            const { data: results, error: searchError } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('role', 'donor')
-                .eq('available', true)
-                .in('blood_group', compatibleGroups);
+            // Fetch donor profiles
+            const q = query(
+                collection(db, 'profiles'),
+                where('role', '==', 'donor'),
+                where('available', '==', true)
+            );
 
-            if (searchError) throw searchError;
+            const querySnapshot = await getDocs(q);
+            const results: Donor[] = [];
 
-            // Map PG fields back to frontend expectations
-            const mappedResults = (results || []).map(d => ({
-                ...d,
-                uid: d.id,
-                bloodGroup: d.blood_group,
-                donorType: d.donor_type,
-                lastDonationDate: d.last_donation_date || null
-            }));
+            querySnapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const dBloodGroup = data.bloodGroup || data.blood_group;
+                if (compatibleGroups.includes(dBloodGroup)) {
+                    // Match State / District / City if provided
+                    const matchesState = !stateName || (data.state && data.state.toLowerCase() === stateName.toLowerCase());
+                    const matchesDistrict = !district || (data.district && data.district.toLowerCase() === district.toLowerCase());
+                    const matchesCity = !city || (data.city && data.city.toLowerCase().includes(city.toLowerCase()));
 
-            // Filter by city, state, district if provided
-            let finalResults = mappedResults;
-            if (stateName) {
-                finalResults = finalResults.filter(d => d.state === stateName);
-            }
-            if (district) {
-                finalResults = finalResults.filter(d => d.district === district);
-            }
-            if (city.trim()) {
-                finalResults = finalResults.filter(d => d.city?.toLowerCase().includes(city.toLowerCase()));
-            }
-            setDonors(finalResults);
-
-            // Filter Blood Banks
-            const foundBanks = MOCK_BLOOD_BANKS.filter(bank => {
-                if (bloodGroup !== 'All') {
-                    const hasGroup = bank.bloodTypes.includes(bloodGroup) || bank.bloodTypes.includes("All Types Available");
-                    if (!hasGroup) return false;
+                    if (matchesState && matchesDistrict && matchesCity) {
+                        results.push({
+                            id: docSnap.id,
+                            name: data.name || 'Anonymous Donor',
+                            bloodGroup: dBloodGroup,
+                            city: data.city || data.state || 'Local Area',
+                            phone: data.phone || '',
+                            donorType: data.donorType || data.donor_type || 'volunteer',
+                            lastDonationDate: data.lastDonationDate
+                        });
+                    }
                 }
-                if (stateName && bank.state !== stateName) return false;
-                if (district && bank.district !== district) return false;
-                if (city.trim() && !bank.city.toLowerCase().includes(city.toLowerCase())) return false;
-                return true;
             });
-            setBloodBanks(foundBanks);
+
+            setDonors(results);
+
+            // Also search offline blood banks if city or state matches
+            const matchingBanks = MOCK_BLOOD_BANKS.filter(b => {
+                const matchesState = !stateName || (b.state && b.state.toLowerCase() === stateName.toLowerCase());
+                const matchesCity = !city || (b.city && b.city.toLowerCase().includes(city.toLowerCase()));
+                return matchesState && matchesCity;
+            });
+            setBloodBanks(matchingBanks);
 
         } catch (error) {
-            console.error("Error finding donors:", error);
+            console.error("Search error:", error);
             alert(getFriendlyErrorMessage(error));
         }
         setLoading(false);
     }
 
     return (
-        <div className="container">
-            <h1 style={{ textAlign: 'center', marginBottom: '2rem', color: 'var(--primary)' }}>Find Blood Donors</h1>
+        <div className="container" style={{ padding: '2rem 0' }}>
+            <h1 style={{ textAlign: 'center', marginBottom: '2rem' }}>Find a Blood Donor</h1>
 
-            {/* Search Box */}
-            <div className="card glass" style={{ marginBottom: '3rem' }}>
-                <form onSubmit={handleSearch} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'end' }}>
-                    <div style={{ flex: 1, minWidth: '150px' }}>
-                        <label style={{ fontWeight: '500', display: 'block', marginBottom: '0.5rem' }}>Blood Group</label>
-                        <select style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }} value={bloodGroup} onChange={(e) => setBloodGroup(e.target.value)}>
+            <div className="card glass" style={{ maxWidth: '800px', margin: '0 auto 3rem auto' }}>
+                <form onSubmit={handleSearch} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+                    <div>
+                        <label style={{ fontWeight: '500' }}>Blood Group</label>
+                        <select
+                            value={bloodGroup}
+                            onChange={(e) => setBloodGroup(e.target.value)}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
+                        >
                             {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
                                 <option key={bg} value={bg}>{bg}</option>
                             ))}
                         </select>
                     </div>
-                    <div style={{ flex: 1, minWidth: '150px' }}>
-                        <label style={{ fontWeight: '500', display: 'block', marginBottom: '0.5rem' }}>State (Optional)</label>
+
+                    <div>
+                        <label style={{ fontWeight: '500' }}>State</label>
                         <select
-                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
                             value={stateCode}
                             onChange={(e) => {
-                                setStateCode(e.target.value);
-                                setStateName(e.target.options[e.target.selectedIndex].text);
+                                const nextStateCode = e.target.value;
+                                const nextStateName = e.target.options[e.target.selectedIndex].text;
+                                setStateCode(nextStateCode);
+                                setStateName(nextStateCode ? nextStateName : '');
                                 setDistrict('');
                             }}
                         >
@@ -212,96 +211,68 @@ const FindDonor = () => {
                             ))}
                         </select>
                     </div>
-                    <div style={{ flex: 1, minWidth: '150px' }}>
-                        <label style={{ fontWeight: '500', display: 'block', marginBottom: '0.5rem' }}>District (Optional)</label>
+
+                    <div>
+                        <label style={{ fontWeight: '500' }}>District</label>
                         <select
                             disabled={!stateCode}
-                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', background: !stateCode ? '#f5f5f5' : 'white' }}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem', background: !stateCode ? '#f5f5f5' : 'white' }}
                             value={district}
                             onChange={(e) => setDistrict(e.target.value)}
                         >
                             <option value="">All Districts</option>
-                            {availableDistricts.map(d => (
+                            {availableDistricts.map((d) => (
                                 <option key={d} value={d}>{d}</option>
                             ))}
                         </select>
                     </div>
-                    <div style={{ flex: 1, minWidth: '150px' }}>
-                        <label style={{ fontWeight: '500', display: 'block', marginBottom: '0.5rem' }}>Local Area (Optional)</label>
+
+                    <div>
+                        <label style={{ fontWeight: '500' }}>City / Area</label>
                         <input
                             type="text"
-                            placeholder="Enter area/city..."
-                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
+                            placeholder="e.g. Bangalore"
                             value={city}
                             onChange={(e) => setCity(e.target.value)}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
                         />
                     </div>
-                    <div>
-                        <button disabled={loading} className="btn btn-primary" type="submit" style={{ padding: '0.75rem 2rem', height: '48px' }}>
-                            {loading ? 'Searching...' : 'Search Donors'}
+
+                    <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                        <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.75rem' }} disabled={loading}>
+                            {loading ? 'Searching...' : 'Search'}
                         </button>
                     </div>
                 </form>
             </div>
 
-            {/* Results */}
             {hasSearched && (
                 <div>
-                    <h3 style={{ marginBottom: '1.5rem', color: '#555' }}>
-                        {donors.length > 0 ? `Found ${donors.length} donors nearby` : 'No donors found yet. Try a different location or blood group.'}
-                    </h3>
-
-                    {donors.filter(d => d.donorType === 'member').length > 0 && (
-                        <div style={{ marginBottom: '3rem' }}>
-                            <h4 style={{ color: '#2e7d32', marginBottom: '1.5rem', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '2px solid #e8f5e9', paddingBottom: '0.5rem' }}>
-                                ⭐ Verified Member Donors
-                            </h4>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '2rem' }}>
-                                {donors.filter(d => d.donorType === 'member').map(renderDonorCard)}
-                            </div>
+                    <h2 style={{ marginBottom: '1.5rem' }}>Available Donors ({donors.length})</h2>
+                    {donors.length === 0 ? (
+                        <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#666' }}>
+                            <p>No matching donors found in this location right now.</p>
+                            <p>Try searching neighboring areas or submitting an emergency broadcast request.</p>
+                            <Link to="/emergency" className="btn btn-primary" style={{ marginTop: '1rem' }}>
+                                Broadcast Emergency Request
+                            </Link>
                         </div>
-                    )}
-
-                    {donors.filter(d => d.donorType !== 'member').length > 0 && (
-                        <div>
-                            <h4 style={{ color: '#555', marginBottom: '1.5rem', fontSize: '1.2rem', paddingTop: donors.filter(d => d.donorType === 'member').length > 0 ? '1rem' : '0', borderBottom: '2px solid #eee', paddingBottom: '0.5rem' }}>
-                                Volunteer Donors
-                            </h4>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '2rem' }}>
-                                {donors.filter(d => d.donorType !== 'member').map(renderDonorCard)}
-                            </div>
+                    ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
+                            {donors.map(renderDonorCard)}
                         </div>
                     )}
 
                     {bloodBanks.length > 0 && (
                         <div style={{ marginTop: '3rem' }}>
-                            <h4 style={{ color: '#d32f2f', marginBottom: '1.5rem', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '2px solid #ffebee', paddingBottom: '0.5rem' }}>
-                                <FaTint /> Partner Blood Banks
-                            </h4>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '2rem' }}>
-                                {bloodBanks.map(bank => (
-                                    <div key={bank.id} className="card glass" style={{ borderTop: '4px solid var(--primary)', position: 'relative' }}>
-                                        <span style={{ position: 'absolute', top: '1rem', right: '1rem', background: '#e8f5e9', color: '#2e7d32', padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-                                            {bank.status}
-                                        </span>
-
-                                        <h2 style={{ fontSize: '1.3rem', marginBottom: '0.5rem', marginTop: '0.5rem', color: '#333' }}>{bank.name}</h2>
-
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#666', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
-                                            <FaMapMarker color="var(--primary)" />
-                                            <span><strong>{bank.city}</strong> - {bank.address}</span>
-                                        </div>
-
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#666', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                                            <FaTint color="#d32f2f" />
-                                            <span>Available: <strong>{bank.bloodTypes.join(', ')}</strong></span>
-                                        </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', marginTop: '1.5rem' }}>
-                                            <a href={`tel:${bank.contact}`} className="btn" style={{ background: '#eee', color: '#333', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
-                                                <FaPhone /> Call to Order
-                                            </a>
-                                        </div>
+                            <h2 style={{ marginBottom: '1.5rem' }}>Nearby Blood Banks & Centers ({bloodBanks.length})</h2>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                                {bloodBanks.map((bank, i) => (
+                                    <div key={i} className="card" style={{ borderLeft: '5px solid #1976d2' }}>
+                                        <h3 style={{ margin: '0 0 0.5rem 0' }}>{bank.name}</h3>
+                                        <p style={{ margin: '0 0 0.5rem 0', color: '#666', fontSize: '0.9rem' }}><FaMapMarker /> {bank.address}, {bank.city}</p>
+                                        <p style={{ margin: '0 0 1rem 0', fontSize: '0.9rem' }}><FaPhone /> {bank.contact}</p>
+                                        <a href={`tel:${bank.contact}`} className="btn btn-outline" style={{ display: 'block', textAlign: 'center', fontSize: '0.9rem' }}>Call Blood Bank</a>
                                     </div>
                                 ))}
                             </div>
@@ -311,6 +282,6 @@ const FindDonor = () => {
             )}
         </div>
     );
-}
+};
 
 export default FindDonor;

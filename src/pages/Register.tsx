@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { getAllStates, getDistricts } from 'india-state-district';
 
@@ -24,7 +25,6 @@ const Register = () => {
 
     const { signup, sendEmailVerification, logout, signInWithGoogle } = useAuth();
 
-    // Restored variables
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
@@ -34,7 +34,6 @@ const Register = () => {
             setError('');
             setLoading(true);
             await signInWithGoogle();
-            // Redirect to profile to complete details since Google doesn't provide blood group/phone
             navigate('/profile?mode=onboarding');
         } catch (error: any) {
             console.error(error);
@@ -67,24 +66,23 @@ const Register = () => {
             // 1. Send Email Verification
             await sendEmailVerification(user);
 
-            // 2. Create User Profile (Initial state)
-            const { error: profileError } = await supabase.from('profiles').upsert({
+            // 2. Create User Profile in Firestore
+            await setDoc(doc(db, 'profiles', user.uid), {
                 id: user.uid,
                 name,
                 email,
-                phone: `${countryCode}${phone}`, // Store full number
-                blood_group: bloodGroup,
+                phone: `${countryCode}${phone}`,
+                bloodGroup: bloodGroup,
                 state: stateName,
                 district,
                 city,
                 role,
-                donor_type: role === 'donor' ? 'volunteer' : null,
-                kyc_status: role === 'donor' ? 'none' : null,
-                available: role === 'donor', // Automatically available
-                email_verified: false
+                donorType: role === 'donor' ? 'volunteer' : null,
+                kycStatus: role === 'donor' ? 'none' : null,
+                available: role === 'donor',
+                emailVerified: false,
+                createdAt: new Date().toISOString()
             });
-
-            if (profileError) throw profileError;
 
             // 3. Force Logout & Navigate to Login
             await logout();
@@ -151,86 +149,31 @@ const Register = () => {
                         <label style={{ fontWeight: '500' }}>Phone Number</label>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                             <select
-                                style={{
-                                    padding: '0.75rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #ccc',
-                                    width: '100px',
-                                    background: '#f9f9f9',
-                                    flexShrink: 0
-                                }}
+                                style={{ width: '80px', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
                                 value={countryCode}
                                 onChange={(e) => setCountryCode(e.target.value)}
                             >
-                                <option value="+91">🇮🇳 +91</option>
-                                <option value="+1">🇺🇸 +1</option>
-                                <option value="+44">🇬🇧 +44</option>
-                                <option value="+971">🇦🇪 +971</option>
-                                <option value="+61">🇦🇺 +61</option>
-                                <option value="+65">🇸🇬 +65</option>
-                                <option value="+33">🇫🇷 +33</option>
-                                <option value="+49">🇩🇪 +49</option>
+                                <option value="+91">+91 (IN)</option>
                             </select>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                                <input
-                                    type="tel"
-                                    required
-                                    placeholder="9876543210"
-                                    maxLength={10}
-                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
-                                    value={phone}
-                                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-                                />
-                            </div>
-                        </div>
-                        <small style={{ color: '#666', fontSize: '0.8rem' }}>Select country code and enter mobile number.</small>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.5rem' }}>
-                        <div>
-                            <label style={{ fontWeight: '500' }}>State</label>
-                            <select
+                            <input
+                                type="tel"
                                 required
-                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
-                                value={stateCode}
-                                onChange={(e) => {
-                                    setStateCode(e.target.value);
-                                    setStateName(e.target.options[e.target.selectedIndex].text);
-                                    setDistrict(''); // reset district
-                                }}
-                            >
-                                <option value="" disabled>Select State</option>
-                                {getAllStates().map((s) => (
-                                    <option key={s.code} value={s.code}>{s.name}</option>
-                                ))}
-                            </select>
+                                placeholder="9876543210"
+                                maxLength={10}
+                                style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc' }}
+                                value={phone}
+                                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                            />
                         </div>
-
-                        <div>
-                            <label style={{ fontWeight: '500' }}>District</label>
-                            <select
-                                required
-                                disabled={!stateCode}
-                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem', background: !stateCode ? '#f5f5f5' : 'white' }}
-                                value={district}
-                                onChange={(e) => setDistrict(e.target.value)}
-                            >
-                                <option value="" disabled>Select District</option>
-                                {availableDistricts.map(d => (
-                                    <option key={d} value={d}>{d}</option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label style={{ fontWeight: '500' }}>City / Local Area</label>
-                        <input type="text" required placeholder="Type your local area..." style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }} value={city} onChange={(e) => setCity(e.target.value)} />
                     </div>
 
                     <div>
                         <label style={{ fontWeight: '500' }}>Blood Group</label>
-                        <select style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }} value={bloodGroup} onChange={(e) => setBloodGroup(e.target.value)}>
+                        <select
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
+                            value={bloodGroup}
+                            onChange={(e) => setBloodGroup(e.target.value)}
+                        >
                             {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
                                 <option key={bg} value={bg}>{bg}</option>
                             ))}
@@ -238,32 +181,79 @@ const Register = () => {
                     </div>
 
                     <div>
-                        <label style={{ fontWeight: '500' }}>I am a</label>
-                        <select style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }} value={role} onChange={(e) => setRole(e.target.value)}>
-                            <option value="donor">Donor</option>
-                            <option value="requester">Patient / Requester</option>
+                        <label style={{ fontWeight: '500' }}>State</label>
+                        <select
+                            required
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
+                            value={stateCode}
+                            onChange={(e) => {
+                                const nextStateCode = e.target.value;
+                                const nextStateName = e.target.options[e.target.selectedIndex].text;
+                                setStateCode(nextStateCode);
+                                setStateName(nextStateName);
+                                setDistrict('');
+                            }}
+                        >
+                            <option value="" disabled>Select State</option>
+                            {getAllStates().map((s) => (
+                                <option key={s.code} value={s.code}>{s.name}</option>
+                            ))}
                         </select>
                     </div>
 
-                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '1rem' }}>
-                        <input type="checkbox" required id="consent" style={{ width: '20px', height: '20px' }} />
-                        <label htmlFor="consent" style={{ fontSize: '0.9rem' }}>
-                            I agree to the <a href="#" style={{ color: 'var(--primary)' }}>Privacy Policy</a>. LifeLine-108 is a facilitator, not a medical organization.
-                        </label>
+                    <div>
+                        <label style={{ fontWeight: '500' }}>District</label>
+                        <select
+                            required
+                            disabled={!stateCode}
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem', background: !stateCode ? '#f5f5f5' : 'white' }}
+                            value={district}
+                            onChange={(e) => setDistrict(e.target.value)}
+                        >
+                            <option value="" disabled>Select District</option>
+                            {availableDistricts.map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                            ))}
+                        </select>
                     </div>
 
-                    <div style={{ gridColumn: 'span 2', marginTop: '1rem' }}>
-                        <button disabled={loading} className="btn btn-primary" type="submit" style={{ width: '100%', fontSize: '1.1rem' }}>
-                            {loading ? 'Processing...' : 'Sign Up & Verify'}
-                        </button>
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={{ fontWeight: '500' }}>City / Local Area</label>
+                        <input
+                            type="text"
+                            required
+                            placeholder="e.g. Indiranagar, Sector 15"
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
+                            value={city}
+                            onChange={(e) => setCity(e.target.value)}
+                        />
                     </div>
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={{ fontWeight: '500' }}>I want to:</label>
+                        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input type="radio" name="role" value="donor" checked={role === 'donor'} onChange={(e) => setRole(e.target.value)} />
+                                Donate Blood (Donor)
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input type="radio" name="role" value="requester" checked={role === 'requester'} onChange={(e) => setRole(e.target.value)} />
+                                Request Blood (Patient/Hospital)
+                            </label>
+                        </div>
+                    </div>
+
+                    <button disabled={loading} type="submit" className="btn btn-primary" style={{ gridColumn: 'span 2', marginTop: '1rem', fontSize: '1.1rem' }}>
+                        {loading ? 'Creating Account...' : 'Register'}
+                    </button>
                 </form>
+
                 <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
                     Already have an account? <Link to="/login" style={{ color: 'var(--primary)', fontWeight: 'bold' }}>Login</Link>
                 </div>
-            </div >
-        </div >
+            </div>
+        </div>
     );
-}
+};
 
 export default Register;

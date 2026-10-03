@@ -12,13 +12,18 @@ const ResetPassword = () => {
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
     const isPasswordUpdated = useRef(false);
+    const isMountedRef = useRef(false);
 
     useEffect(() => {
+        isMountedRef.current = true;
         return () => {
-            if (!isPasswordUpdated.current) {
-                // If the user navigates away or closes the page without updating, log them out
-                logout();
-            }
+            isMountedRef.current = false;
+            setTimeout(() => {
+                if (!isMountedRef.current && !isPasswordUpdated.current) {
+                    // If the user navigates away or closes the page without updating, log them out
+                    logout();
+                }
+            }, 100);
         };
     }, [logout]);
 
