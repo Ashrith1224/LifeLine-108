@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://lifeline-108.web.app/sitemap.xml
