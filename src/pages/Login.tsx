@@ -6,7 +6,7 @@ import { getFriendlyErrorMessage } from '../utils/errorUtils';
 const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const { login, logout, sendEmailVerification, signInWithGoogle } = useAuth();
+    const { login, sendEmailVerification, signInWithGoogle } = useAuth();
     const [error, setError] = useState('');
     const [msg, setMsg] = useState('');
     const [loading, setLoading] = useState(false);
@@ -23,11 +23,7 @@ const Login = () => {
             const user = userCredential.user;
 
             if (!user.emailVerified) {
-                setUnverifiedUser(user); // Keep reference to user to resend email
-                await logout();
-                setError("Email not verified. Please check your inbox.");
-                setLoading(false);
-                return;
+                setUnverifiedUser(user);
             }
 
             navigate('/');

@@ -4,6 +4,7 @@ import { collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { FaHeartbeat, FaHandHoldingHeart, FaSearchLocation, FaArrowRight, FaTint } from 'react-icons/fa';
 import { useAuth } from '../contexts/AuthContext';
+import { checkAndAutoSeed, seedSampleData } from '../data/seedData';
 
 const Home = () => {
     const [requests, setRequests] = useState<any[]>([]);
@@ -19,7 +20,11 @@ const Home = () => {
                     limit(50)
                 );
 
-                const snapshot = await getDocs(q);
+                let snapshot = await getDocs(q);
+                if (snapshot.empty) {
+                    await checkAndAutoSeed();
+                    snapshot = await getDocs(q);
+                }
                 const list: any[] = [];
 
                 snapshot.forEach(docSnap => {
@@ -180,6 +185,17 @@ const Home = () => {
                             <FaHandHoldingHeart style={{ fontSize: '3rem', color: 'var(--primary)', marginBottom: '1rem' }} />
                             <h3>No urgent requests right now</h3>
                             <p style={{ color: 'var(--text-muted)' }}>All current needs have been fulfilled. You're doing great!</p>
+                            <button
+                                onClick={async () => {
+                                    setLoading(true);
+                                    await seedSampleData();
+                                    window.location.reload();
+                                }}
+                                className="btn btn-primary"
+                                style={{ marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+                            >
+                                🩸 Populate Demo Requests & Donors
+                            </button>
                         </div>
                     ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '2rem' }}>

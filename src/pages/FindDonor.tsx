@@ -7,6 +7,7 @@ import { FaMapMarker, FaPhone } from 'react-icons/fa';
 import { getFriendlyErrorMessage } from '../utils/errorUtils';
 import { getAllStates, getDistricts } from 'india-state-district';
 import { MOCK_BLOOD_BANKS } from '../data/bloodBanks';
+import { seedSampleData } from '../data/seedData';
 
 interface Donor {
     id: string;
@@ -253,9 +254,22 @@ const FindDonor = () => {
                         <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#666' }}>
                             <p>No matching donors found in this location right now.</p>
                             <p>Try searching neighboring areas or submitting an emergency broadcast request.</p>
-                            <Link to="/emergency" className="btn btn-primary" style={{ marginTop: '1rem' }}>
-                                Broadcast Emergency Request
-                            </Link>
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
+                                <Link to="/emergency" className="btn btn-primary">
+                                    Broadcast Emergency Request
+                                </Link>
+                                <button
+                                    onClick={async () => {
+                                        setLoading(true);
+                                        await seedSampleData();
+                                        alert("Sample verified donors loaded! Click Search again.");
+                                        setLoading(false);
+                                    }}
+                                    className="btn btn-outline"
+                                >
+                                    🩸 Load Sample Donors
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>

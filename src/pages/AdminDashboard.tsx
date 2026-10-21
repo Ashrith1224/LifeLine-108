@@ -4,6 +4,7 @@ import { collection, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firesto
 import { db } from '../services/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { seedSampleData } from '../data/seedData';
 
 const AdminDashboard = () => {
     const [stats, setStats] = useState({
@@ -217,7 +218,21 @@ const AdminDashboard = () => {
 
     return (
         <div className="container" style={{ padding: '2rem 0' }}>
-            <h1 style={{ color: 'var(--primary)', marginBottom: '2rem' }}>Administrator Dashboard</h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <h1 style={{ color: 'var(--primary)', margin: 0 }}>Administrator Dashboard</h1>
+                <button
+                    onClick={async () => {
+                        setLoading(true);
+                        await seedSampleData();
+                        alert("Sample verified donors and emergency requests added!");
+                        window.location.reload();
+                    }}
+                    className="btn btn-outline"
+                    style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 'bold' }}
+                >
+                    🩸 Populate Demo Data (Donors & Requests)
+                </button>
+            </div>
 
             {/* STATS OVERVIEW */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>

@@ -23,7 +23,7 @@ const Register = () => {
     // Derived districts list
     const availableDistricts = stateCode ? getDistricts(stateCode) : [];
 
-    const { signup, sendEmailVerification, logout, signInWithGoogle } = useAuth();
+    const { signup, sendEmailVerification, signInWithGoogle } = useAuth();
 
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -63,8 +63,12 @@ const Register = () => {
             const res = await signup(email, password);
             const user = res.user;
 
-            // 1. Send Email Verification
-            await sendEmailVerification(user);
+            // 1. Send Email Verification (non-blocking)
+            try {
+                await sendEmailVerification(user);
+            } catch (verErr) {
+                console.warn("Verification email non-fatal notice:", verErr);
+            }
 
             // 2. Create User Profile in Firestore
             await setDoc(doc(db, 'profiles', user.uid), {
@@ -84,10 +88,8 @@ const Register = () => {
                 createdAt: new Date().toISOString()
             });
 
-            // 3. Force Logout & Navigate to Login
-            await logout();
-            alert("Account created successfully! A verification link has been sent to your email. Please verify your email before logging in (Check Spam Folder).");
-            navigate('/login');
+            // 3. User is already logged in, take them straight to Dashboard
+            navigate('/dashboard');
 
         } catch (err: any) {
             console.error(err);

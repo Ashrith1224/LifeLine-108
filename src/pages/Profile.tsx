@@ -67,7 +67,7 @@ const Profile = () => {
 
         setLoading(true);
         try {
-            // If Onboarding, handle Password Creation
+            // If Onboarding, handle Password Creation (optional)
             if (isOnboarding && createPassword) {
                 if (createPassword !== confirmCreatePassword) {
                     setLoading(false);
@@ -77,7 +77,11 @@ const Profile = () => {
                     setLoading(false);
                     return setMsg("Failed: Password must be at least 6 characters.");
                 }
-                await updateUserPassword(currentUser, createPassword);
+                try {
+                    await updateUserPassword(currentUser, createPassword);
+                } catch (pwErr) {
+                    console.warn("Could not update password:", pwErr);
+                }
             }
 
             const payload = {
@@ -279,8 +283,7 @@ const Profile = () => {
                                     <label style={{ fontWeight: '500' }}>Password</label>
                                     <input
                                         type="password"
-                                        required
-                                        placeholder="New Password"
+                                        placeholder="New Password (optional)"
                                         value={createPassword}
                                         onChange={e => setCreatePassword(e.target.value)}
                                         style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
@@ -290,8 +293,7 @@ const Profile = () => {
                                     <label style={{ fontWeight: '500' }}>Confirm Password</label>
                                     <input
                                         type="password"
-                                        required
-                                        placeholder="Confirm Password"
+                                        placeholder="Confirm Password (optional)"
                                         value={confirmCreatePassword}
                                         onChange={e => setConfirmCreatePassword(e.target.value)}
                                         style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #ccc', marginTop: '0.5rem' }}
